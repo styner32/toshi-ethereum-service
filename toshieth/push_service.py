@@ -1,17 +1,14 @@
+import asyncio
 import logging
-import os
-from configparser import SectionProxy
 
-from toshi.tasks import TaskHandler
-from toshi.database import DatabaseMixin
+from toshieth.tasks import BaseEthServiceWorker, BaseTaskHandler
+from toshi.config import config
 from toshi.log import configure_logger
 from toshi.push import PushServerClient, GCMHttpPushClient
 
-from toshieth.tasks import TaskListenerApplication
-
 log = logging.getLogger("toshieth.push_service")
 
-class PushNotificationHandler(DatabaseMixin, TaskHandler):
+class PushNotificationHandler(BaseTaskHandler):
 
     def initialize(self, pushclient):
         self.pushclient = pushclient
@@ -28,44 +25,30 @@ class PushNotificationHandler(DatabaseMixin, TaskHandler):
                 log.debug("Sending {} PN to: {} ({})".format(service, eth_address, row['registration_id']))
                 await self.pushclient.send(row['toshi_id'], service, row['registration_id'], {"message": message})
 
-class PushNotificationService(TaskListenerApplication):
+class PushNotificationService(BaseEthServiceWorker):
 
-    def __init__(self, pushclient=None, **kwargs):
+    def __init__(self, *, pushclient=None):
 
-        super().__init__([],
-                         listener_id="pushnotification",
-                         **kwargs)
+        super().__init__([], queue_name="pushservice")
 
         if pushclient is not None:
             self.pushclient = pushclient
-        elif 'gcm' in self.config and 'server_key' in self.config['gcm'] and self.config['gcm']['server_key'] is not None:
-            self.pushclient = GCMHttpPushClient(self.config['gcm']['server_key'])
-        elif 'pushserver' in self.config and 'url' in self.config['pushserver'] and self.config['pushserver']['url'] is not None:
-            self.pushclient = PushServerClient(url=self.config['pushserver']['url'],
-                                               username=self.config['pushserver'].get('username'),
-                                               password=self.config['pushserver'].get('password'))
+        elif 'gcm' in config and 'server_key' in config['gcm'] and config['gcm']['server_key'] is not None:
+            self.pushclient = GCMHttpPushClient(config['gcm']['server_key'])
+        elif 'pushserver' in config and 'url' in config['pushserver'] and config['pushserver']['url'] is not None:
+            self.pushclient = PushServerClient(url=config['pushserver']['url'],
+                                               username=config['pushserver'].get('username'),
+                                               password=config['pushserver'].get('password'))
         else:
             raise Exception("Unable to find appropriate push notification client config")
 
-        self.task_listener.add_task_handler(PushNotificationHandler, {'pushclient': self.pushclient})
-
-    def process_config(self):
-        config = super().process_config()
-
-        if 'PUSH_URL' in os.environ:
-            config.setdefault('pushserver', SectionProxy(config, 'pushserver'))['url'] = os.environ['PUSH_URL']
-        if 'PUSH_PASSWORD' in os.environ:
-            config.setdefault('pushserver', SectionProxy(config, 'pushserver'))['password'] = os.environ['PUSH_PASSWORD']
-        if 'PUSH_USERNAME' in os.environ:
-            config.setdefault('pushserver', SectionProxy(config, 'pushserver'))['username'] = os.environ['PUSH_USERNAME']
-
-        if 'GCM_SERVER_KEY' in os.environ:
-            config.setdefault('gcm', SectionProxy(config, 'gcm'))['server_key'] = os.environ['GCM_SERVER_KEY']
+        self.add_task_handler(PushNotificationHandler, kwargs={'pushclient': self.pushclient})
 
         configure_logger(log)
-        return config
-
 
 if __name__ == "__main__":
+    from toshieth.app import extra_service_config
+    extra_service_config()
     app = PushNotificationService()
-    app.run()
+    app.work()
+    asyncio.get_event_loop().run_forever()

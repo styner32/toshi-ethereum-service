@@ -1,98 +1,52 @@
 import asyncio
-import os
-from toshi.jsonrpc.client import JsonRPCClient
-from toshi.tasks import TaskListener
-from toshi.web import ConfigurationManager
-from toshieth.websocket import WebsocketNotificationHandler
-from tornado.ioloop import IOLoop
-from tornado.platform.asyncio import to_asyncio_future
 
-class EthServiceTaskListener(TaskListener):
-    def __init__(self, application, queue=None, ioloop=None):
-        super().__init__([(WebsocketNotificationHandler,)],
-                         application, queue=queue, ioloop=ioloop,
-                         listener_id="ethservicetasklistener")
+from toshi.database import prepare_database, DatabaseMixin
+from toshi.redis import prepare_redis, get_redis_connection, RedisMixin
+from trq.worker import Worker
+from trq.dispatch import Dispatcher as _Dispatcher
 
-        self.callbacks = {}
-        self.filter_callbacks = {}
+class BaseTaskHandler(DatabaseMixin, RedisMixin):
+    def __init__(self, task_id, *args, **kwargs):
+        self.task_id = task_id
+        self.initialize(*args, **kwargs)
 
-    def subscribe(self, eth_address, callback):
-        """Registers a callback to receive transaction notifications for the
-        given toshi identifier.
+    def initialize(*args, **kwargs):
+        pass
 
-        The callback must accept 2 parameters, the transaction dict, and the
-        sender's toshi identifier"""
-        callbacks = self.callbacks.setdefault(eth_address, [])
-        if callback not in callbacks:
-            callbacks.append(callback)
+class BaseEthServiceWorker:
+    def __init__(self, handlers, *, queue_name):
+        self._handlers = handlers or []
+        self._queue_name = queue_name
+        self.worker = None
 
-    def unsubscribe(self, eth_address, callback):
-        if eth_address in self.callbacks and callback in self.callbacks[eth_address]:
-            self.callbacks[eth_address].remove(callback)
-            if not self.callbacks[eth_address]:
-                self.callbacks.pop(eth_address)
+    def work(self):
+        return asyncio.get_event_loop().create_task(self._work())
 
-    def filter(self, filter_id, callback):
-        callbacks = self.filter_callbacks.setdefault(filter_id, [])
-        if callback not in callbacks:
-            callbacks.append(callback)
+    async def _work(self):
+        await prepare_database(handle_migration=False)
+        redis = await prepare_redis()
+        self.worker = Worker(self._handlers, queue_name=self._queue_name, connection=redis)
+        self.worker.work()
 
-    def remove_filter(self, filter_id, callback):
-        if filter_id in self.filter_callbacks and callback in self.filter_callbacks[filter_id]:
-            self.filter_callbacks[filter_id].remove(callback)
-            if not self.filter_callbacks[filter_id]:
-                self.filter_callbacks.pop(filter_id)
+    def shutdown(self):
+        return self.worker.shutdown()
 
-class TaskListenerApplication(ConfigurationManager):
-
-    def __init__(self, handlers, listener_id=None, config=None, redis_connection_pool=None, connection_pool=None, ioloop=None):
-
-        if ioloop is None:
-            ioloop = IOLoop.current()
-        self.ioloop = ioloop
-
-        if config:
-            self.config = config
+    def add_task_handler(self, cls, args=None, kwargs=None):
+        if self.worker is None:
+            self._handlers.append((cls, args or [], kwargs or {}))
         else:
-            self.config = self.process_config()
+            self.worker.add_task_handler(cls, args=args, kwargs=kwargs)
 
-        # TODO: some nicer way of handling this
-        # although the use cases for having this should only be in
-        # testing, so it shouldn't be a huge issue
-        if connection_pool is not None or redis_connection_pool is not None:
-            self.redis_connection_pool = redis_connection_pool
-            self.connection_pool = connection_pool
-        else:
-            self.prepare_databases(handle_migration=False)
+class Dispatcher(_Dispatcher):
+    def __init__(self, *, queue_name):
+        super().__init__(queue_name=queue_name)
 
-        self.task_listener = TaskListener(
-            handlers,
-            self,
-            listener_id=listener_id
-        )
+    @property
+    def connection(self):
+        return get_redis_connection()
 
-    def process_config(self):
-        config = super().process_config()
-        if 'ETHEREUM_NODE_URL' in os.environ:
-            config['ethereum'] = {'url': os.environ['ETHEREUM_NODE_URL']}
-
-        if 'MONITOR_ETHEREUM_NODE_URL' in os.environ:
-            config['monitor'] = {'url': os.environ['MONITOR_ETHEREUM_NODE_URL']}
-
-        if 'ethereum' in config:
-            if 'ETHEREUM_NETWORK_ID' in os.environ:
-                config['ethereum']['network_id'] = os.environ['ETHEREUM_NETWORK_ID']
-            else:
-                config['ethereum']['network_id'] = self.asyncio_loop.run_until_complete(
-                    to_asyncio_future(JsonRPCClient(config['ethereum']['url']).net_version()))
-        return config
-
-    def start(self):
-        return self.task_listener.start_task_listener()
-
-    def shutdown(self, *, soft=False):
-        return self.task_listener.stop_task_listener(soft=soft)
-
-    def run(self):
-        self.start()
-        asyncio.get_event_loop().run_forever()
+manager_dispatcher = Dispatcher(queue_name="manager")
+push_dispatcher = Dispatcher(queue_name="pushservice")
+eth_dispatcher = Dispatcher(queue_name="ethservice")
+erc20_dispatcher = Dispatcher(queue_name="erc20")
+collectibles_dispatcher = Dispatcher(queue_name="collectibles")

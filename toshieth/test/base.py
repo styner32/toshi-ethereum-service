@@ -5,7 +5,9 @@ import toshieth.manager
 import toshieth.push_service
 import toshieth.erc20manager
 import toshieth.collectibles.erc721
+import toshieth.collectibles.worker
 
+from toshi.config import config
 from toshi.test.base import AsyncHandlerTest
 from toshi.test.base import ToshiWebSocketJsonRPCClient
 from toshieth.app import Application, urls
@@ -31,28 +33,33 @@ class EthServiceBaseTest(AsyncHandlerTest):
         path = "/v1{}".format(path)
         return super().get_url(path)
 
-    def setUp(self):
-        # add fake redis config to make sure task_listener is created
-        super().setUp(extraconf={'redis': {'unix_socket_path': '/dev/null', 'db': '0'}})
-
     async def wait_on_tx_confirmation(self, tx_hash, interval_check_callback=None):
         while True:
-            async with self.pool.acquire() as con:
-                row = await con.fetchrow("SELECT * FROM transactions WHERE hash = $1 AND status = 'confirmed'", tx_hash)
-            if row:
+            tx = await self.eth.eth_getTransactionByHash(tx_hash)
+            if tx is not None and tx['blockNumber'] is not None:
                 break
             if interval_check_callback:
                 f = interval_check_callback()
                 if asyncio.iscoroutine(f):
                     await f
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
         # make sure the last_blocknumber has been saved to the db before returning
+        # and if the transaction is in the database, make sure it and any matching
+        # token transaactions are confirmed as it can take a few event loop cycles
+        # to update the status
         while True:
             async with self.pool.acquire() as con:
                 blocknumber = await con.fetchval("SELECT blocknumber FROM last_blocknumber")
-            if blocknumber and blocknumber >= row['blocknumber']:
-                return row
-            await asyncio.sleep(0.01)
+                row = await con.fetchrow("SELECT transaction_id, status FROM transactions WHERE hash = $1", tx_hash)
+                if row:
+                    tkrow = await con.fetchrow("SELECT status FROM token_transactions WHERE transaction_id = $1", row['transaction_id'])
+                else:
+                    tkrow = None
+            if blocknumber and blocknumber >= int(tx['blockNumber'], 16) and \
+               (row is None or (row['status'] == 'confirmed' or row['status'] == 'error')) and \
+               (tkrow is None or (tkrow['status'] == 'confirmed' or tkrow['status'] == 'error')):
+                return tx
+            await asyncio.sleep(0)
 
     async def get_tx_skel(self, from_key, to_addr, val, nonce=None, gas_price=None, gas=None, data=None, token_address=None, expected_response_code=200):
         from_addr = private_key_to_address(from_key)
@@ -114,14 +121,14 @@ class EthServiceBaseTest(AsyncHandlerTest):
 
     @property
     def network_id(self):
-        return int(self._app.config['ethereum']['network_id'])
+        return int(config['ethereum']['network_id'])
 
     @property
     def eth(self):
-        if 'ethereum' not in self._app.config:
+        if 'ethereum' not in config:
             raise Exception("Missing ethereum configuration")
         if not hasattr(self, '_eth_jsonrpc_client'):
-            self._eth_jsonrpc_client = prepare_ethereum_jsonrpc_client(self._app.config['ethereum'])
+            self._eth_jsonrpc_client = prepare_ethereum_jsonrpc_client(config['ethereum'])
         return self._eth_jsonrpc_client
 
 def requires_block_monitor(func=None, cls=toshieth.monitor.BlockMonitor, pass_monitor=False, begin_started=True):
@@ -132,12 +139,10 @@ def requires_block_monitor(func=None, cls=toshieth.monitor.BlockMonitor, pass_mo
 
         async def wrapper(self, *args, **kwargs):
 
-            if 'ethereum' not in self._app.config:
+            if 'ethereum' not in config:
                 raise Exception("Missing ethereum config from setup")
 
-            monitor = cls(config=self._app.config,
-                          connection_pool=self._app.connection_pool,
-                          redis_connection_pool=self._app.redis_connection_pool)
+            monitor = cls()
 
             if begin_started:
                 await monitor.start()
@@ -153,7 +158,7 @@ def requires_block_monitor(func=None, cls=toshieth.monitor.BlockMonitor, pass_mo
                 if asyncio.iscoroutine(f):
                     await f
             finally:
-                await monitor.shutdown(soft=True)
+                await monitor.shutdown()
 
         return wrapper
 
@@ -164,8 +169,8 @@ def requires_block_monitor(func=None, cls=toshieth.monitor.BlockMonitor, pass_mo
 
 # overrides the start method to not trigger things that should only run when live
 class TestTaskManager(toshieth.manager.TaskManager):
-    def start(self):
-        return self.task_listener.start_task_listener()
+    def work(self):
+        return asyncio.get_event_loop().create_task(self._work())
 
 def requires_task_manager(func=None, pass_manager=False):
     """Used to ensure all database connections are returned to the pool
@@ -175,15 +180,12 @@ def requires_task_manager(func=None, pass_manager=False):
 
         async def wrapper(self, *args, **kwargs):
 
-            if 'redis' not in self._app.config:
+            if 'redis' not in config:
                 raise Exception("Missing redis config from setup")
 
-            task_manager = TestTaskManager(
-                config=self._app.config,
-                connection_pool=self._app.connection_pool,
-                redis_connection_pool=self._app.redis_connection_pool)
+            task_manager = TestTaskManager()
 
-            await task_manager.start()
+            task_manager.work()
 
             if pass_manager:
                 if pass_manager is True:
@@ -196,7 +198,7 @@ def requires_task_manager(func=None, pass_manager=False):
                 if asyncio.iscoroutine(f):
                     await f
             finally:
-                await task_manager.shutdown(soft=True)
+                await task_manager.shutdown()
 
         return wrapper
 
@@ -213,17 +215,14 @@ def requires_push_service(func, cls, pass_push_service=False, pass_push_client=F
 
         async def wrapper(self, *args, **kwargs):
 
-            if 'redis' not in self._app.config:
+            if 'redis' not in config:
                 raise Exception("Missing redis config from setup")
 
             pushclient = cls()
             push_service = toshieth.push_service.PushNotificationService(
-                config=self._app.config,
-                connection_pool=self._app.connection_pool,
-                redis_connection_pool=self._app.redis_connection_pool,
                 pushclient=pushclient)
 
-            await push_service.start()
+            await push_service.work()
 
             if pass_push_service:
                 if pass_push_service is True:
@@ -241,7 +240,7 @@ def requires_push_service(func, cls, pass_push_service=False, pass_push_client=F
                 if asyncio.iscoroutine(f):
                     await f
             finally:
-                await push_service.shutdown(soft=False)
+                await push_service.shutdown()
 
         return wrapper
 
@@ -264,7 +263,7 @@ class MockPushClient:
     def get(self):
         return self.send_queue.get()
 
-def requires_collectible_monitor(func=None, pass_collectible_monitor=False, begin_started=True):
+def requires_collectible_monitor(func=None, pass_collectible_monitor=False):
     """Used to ensure all database connections are returned to the pool
     before finishing the test"""
 
@@ -272,19 +271,16 @@ def requires_collectible_monitor(func=None, pass_collectible_monitor=False, begi
 
         async def wrapper(self, *args, **kwargs):
 
-            if 'ethereum' not in self._app.config:
+            if 'ethereum' not in config:
                 raise Exception("Missing ethereum config from setup")
 
-            if 'collectibles' not in self._app.config:
-                self._app.config['collectibles'] = {'image_format': ''}
+            if 'collectibles' not in config:
+                config['collectibles'] = {'image_format': ''}
 
-            monitor = toshieth.collectibles.erc721.ERC721TaskManager(
-                config=self._app.config,
-                connection_pool=self._app.connection_pool,
-                redis_connection_pool=self._app.redis_connection_pool)
-
-            if begin_started:
-                await monitor.start()
+            monitor = toshieth.collectibles.erc721.ERC721TaskManager()
+            w = toshieth.collectibles.worker.CollectiblesWorker()
+            w.add_instance(monitor)
+            w.work()
 
             if pass_collectible_monitor:
                 if pass_collectible_monitor is True:
@@ -297,7 +293,8 @@ def requires_collectible_monitor(func=None, pass_collectible_monitor=False, begi
                 if asyncio.iscoroutine(f):
                     await f
             finally:
-                await monitor.shutdown(soft=True)
+                await monitor.shutdown()
+                await w.shutdown()
 
         return wrapper
 
@@ -314,16 +311,13 @@ def requires_erc20_manager(func=None, pass_erc20_manager=False, begin_started=Tr
 
         async def wrapper(self, *args, **kwargs):
 
-            if 'ethereum' not in self._app.config:
+            if 'ethereum' not in config:
                 raise Exception("Missing ethereum config from setup")
 
-            manager = toshieth.erc20manager.TaskManager(
-                config=self._app.config,
-                connection_pool=self._app.connection_pool,
-                redis_connection_pool=self._app.redis_connection_pool)
+            manager = toshieth.erc20manager.TaskManager()
 
             if begin_started:
-                await manager.start()
+                await manager.work()
 
             if pass_erc20_manager:
                 if pass_erc20_manager is True:
@@ -336,7 +330,34 @@ def requires_erc20_manager(func=None, pass_erc20_manager=False, begin_started=Tr
                 if asyncio.iscoroutine(f):
                     await f
             finally:
-                await manager.shutdown(soft=True)
+                await manager.shutdown()
+
+        return wrapper
+
+    if func is not None:
+        return wrap(func)
+    else:
+        return wrap
+
+def requires_websocket_worker(func=None):
+
+    def wrap(fn):
+
+        async def wrapper(self, *args, **kwargs):
+
+            if 'redis' not in config:
+                raise Exception("Missing redis config from setup")
+
+            worker = toshieth.websocket.EthServiceWorker()
+            self._app.worker = worker
+            worker.work()
+
+            try:
+                f = fn(self, *args, **kwargs)
+                if asyncio.iscoroutine(f):
+                    await f
+            finally:
+                await worker.shutdown()
 
         return wrapper
 
@@ -371,6 +392,7 @@ def requires_full_stack(func=None, *, redis=None, parity=None, ethminer=None, ma
         requires_database,
         (requires_redis, {'pass_redis': redis}),
         (requires_parity, {'pass_parity': parity, 'pass_ethminer': ethminer}),
+        (requires_websocket_worker,),
         (requires_task_manager, {'pass_manager': manager}),
         (requires_block_monitor, {'pass_monitor': block_monitor}),
         (requires_push_service, (MockPushClient,), {'pass_push_client': push_client}),

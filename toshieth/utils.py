@@ -1,28 +1,33 @@
 from toshi.utils import parse_int
 from toshi.ethereum.utils import data_decoder
-from toshi.ethereum.tx import (
-    create_transaction, add_signature_to_transaction
-)
+from toshi.ethereum.tx import create_transaction
+from toshi.redis import get_redis_connection
 
 class RedisLockException(Exception):
     pass
 
 class RedisLock:
-    def __init__(self, redis, key, raise_when_locked=None, prefix="lock:", ex=30):
-        self.redis = redis
+    def __init__(self, key, raise_when_locked=None, prefix="lock:", ex=30):
         self.key = prefix + key
         self.raise_when_locked = raise_when_locked or RedisLockException
         self.ex = ex
         self.locked = None
 
     def __enter__(self):
-        self.locked = locked = self.redis.set(self.key, True, nx=True, ex=self.ex)
+        raise NotImplemented
+
+    async def __aenter__(self):
+        redis = get_redis_connection()
+        self.locked = locked = await redis.set(
+            self.key, 1,
+            exist=redis.SET_IF_NOT_EXIST,
+            expire=self.ex)
         if not locked:
             raise self.raise_when_locked()
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    async def __aexit__(self, exc_type, exc_value, traceback):
         if self.locked:
-            self.redis.delete(self.key)
+            await get_redis_connection().delete(self.key)
 
 def database_transaction_to_rlp_transaction(transaction):
     """returns an rlp transaction for the given transaction"""

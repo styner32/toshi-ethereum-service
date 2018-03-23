@@ -12,7 +12,7 @@ class GasPriceTest(EthServiceBaseTest):
 
         gas_price = 50000000000
         assert(gas_price != DEFAULT_GASPRICE)
-        self.redis.set("gas_station_standard_gas_price", hex(gas_price))
+        await self.redis.set("gas_station_standard_gas_price", hex(gas_price))
 
         resp = await self.fetch("/gasprice")
         self.assertResponseCodeEqual(resp, 200)

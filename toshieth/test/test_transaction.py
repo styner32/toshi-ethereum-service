@@ -209,7 +209,7 @@ class TransactionTest(EthServiceBaseTest):
         default_fees = DEFAULT_STARTGAS * DEFAULT_GASPRICE
 
         tx_hash = await self.send_tx(FAUCET_PRIVATE_KEY, TEST_ADDRESS, val)
-        await self.wait_on_tx_confirmation(tx_hash)
+        tx = await self.wait_on_tx_confirmation(tx_hash)
 
         resp = await self.fetch('/balance/{}'.format(TEST_ADDRESS))
         self.assertEqual(resp.code, 200)
@@ -233,7 +233,7 @@ class TransactionTest(EthServiceBaseTest):
         tx_hash = body['tx_hash']
 
         # wait for a push notification
-        await self.wait_on_tx_confirmation(tx_hash)
+        tx = await self.wait_on_tx_confirmation(tx_hash)
 
         # make sure balance is returned correctly (and is 0)
         resp = await self.fetch('/balance/{}'.format(TEST_ADDRESS))
@@ -645,6 +645,7 @@ class TransactionTest(EthServiceBaseTest):
         self.assertEqual(resp.code, 400, resp.body)
         body = json_decode(resp.body)
         self.assertEqual(len(body['errors']), 1)
+        print(body)
         self.assertEqual(body['errors'][0]['id'], 'insufficient_funds')
 
     @gen_test(timeout=15)
@@ -653,7 +654,7 @@ class TransactionTest(EthServiceBaseTest):
 
         gas_price = 50000000000
         assert(gas_price != DEFAULT_GASPRICE)
-        self.redis.set("gas_station_standard_gas_price", hex(gas_price))
+        await self.redis.set("gas_station_standard_gas_price", hex(gas_price))
         async with self.pool.acquire() as con:
             await con.execute("INSERT INTO from_address_gas_price_whitelist (address) VALUES ($1)", FAUCET_ADDRESS)
         body = {

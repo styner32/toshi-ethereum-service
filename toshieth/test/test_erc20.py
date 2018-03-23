@@ -46,7 +46,6 @@ class ERC20Test(EthServiceBaseTest):
         registeres that address for PNs, and checks that the balance cache is updated
         """
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
         token_args = [
             ["TST", "Test Token", 18],
             ["BOB", "Big Old Bucks", 10],
@@ -134,8 +133,6 @@ class ERC20Test(EthServiceBaseTest):
     async def test_transaction_skeleton_erc20_transfer(self, *, parity, push_client, monitor):
         """Tests that the transaction skeleton endpoint """
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
-
         contract = await self.deploy_erc20_contract("TST", "Test Token", 18)
         await contract.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
 
@@ -201,8 +198,6 @@ class ERC20Test(EthServiceBaseTest):
     async def test_bad_erc20_transaction(self, *, parity, push_client, monitor):
         """Tests that the transaction skeleton endpoint """
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
-
         contract = await self.deploy_erc20_contract("TST", "Test Token", 18)
         await contract.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
         await self.faucet(TEST_ADDRESS, 10 ** 18)
@@ -247,8 +242,6 @@ class ERC20Test(EthServiceBaseTest):
     async def test_erc20_max_transaction(self, *, parity, push_client, monitor):
         """Tests that the transaction skeleton endpoint """
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
-
         contract = await self.deploy_erc20_contract("TST", "Test Token", 18)
         await contract.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
         await self.faucet(TEST_ADDRESS, 10 ** 18)
@@ -282,8 +275,6 @@ class ERC20Test(EthServiceBaseTest):
     async def test_newly_added_erc20_token(self, *, parity, push_client, monitor):
         """Tests that the transaction skeleton endpoint """
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
-
         contract = await self.deploy_erc20_contract("TST", "Test Token", 18)
         await contract.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
         await self.faucet(TEST_ADDRESS, 10 ** 18)
@@ -314,7 +305,6 @@ class ERC20Test(EthServiceBaseTest):
     @requires_full_stack(parity=True, push_client=True, block_monitor=True)
     async def test_weth_deposits_and_withdrawals(self, *, parity, push_client, monitor):
         """Tests the special handling of the WETH contract's deposit and withdrawal methods"""
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
 
         weth = await Contract.from_source_code(WETH_CONTRACT.encode('utf8'), "WETH9", deployer_private_key=FAUCET_PRIVATE_KEY)
         async with self.pool.acquire() as con:
@@ -366,8 +356,6 @@ class ERC20Test(EthServiceBaseTest):
     @requires_full_stack(parity=True, push_client=True, block_monitor=True)
     async def test_contract_internal_erc20_transfers(self, *, parity, push_client, monitor):
         """Tests that transfers triggered by another contract (e.g. an exchange) trigger balance updates for the tokens involved"""
-
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
 
         zrx = await self.deploy_erc20_contract("ZRX", "0x", 18)
         tok = await self.deploy_erc20_contract("TOK", "TOK Token", 18)
@@ -463,8 +451,6 @@ class ERC20Test(EthServiceBaseTest):
     @requires_full_stack(parity=True, push_client=True, block_monitor=True)
     async def test_contract_internal_erc20_transfers_with_weth(self, *, parity, push_client, monitor):
         """Tests that transfers triggered by another contract (e.g. an exchange) trigger balance updates for the tokens involved, using WETH"""
-
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
 
         zrx = await self.deploy_erc20_contract("ZRX", "0x", 18)
         tok = await self.deploy_erc20_contract("TOK", "TOK Token", 18)
@@ -607,8 +593,6 @@ class ERC20Test(EthServiceBaseTest):
     @requires_full_stack(parity=True, push_client=True, block_monitor=True)
     async def test_contract_internal_erc20_transfers_with_weth_through_toshi(self, *, parity, push_client, monitor):
         """Tests that transfers triggered by another contract (e.g. an exchange) trigger balance updates for the tokens involved, using WETH, sending all calls through toshi http endpoints"""
-
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
 
         zrx = await self.deploy_erc20_contract("ZRX", "0x", 18)
         tok = await self.deploy_erc20_contract("TOK", "TOK Token", 18)
@@ -764,8 +748,6 @@ class ERC20Test(EthServiceBaseTest):
         """Many bots are broken by token txs right now as the sofa-js library throws an
         error on invalid sofa types. Making sure bots aren't effected by this change
         until we've had time to update the libraries and important bots"""
-
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
 
         contract = await self.deploy_erc20_contract("TST", "Test Token", 18)
         await contract.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)

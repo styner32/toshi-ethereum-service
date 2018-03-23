@@ -22,7 +22,7 @@ class TransactionWhitelistTest(EthServiceBaseTest):
         assert(gas_station_gas_price != DEFAULT_GASPRICE)
         assert(custom_gas_price != DEFAULT_GASPRICE)
         assert(gas_station_gas_price != custom_gas_price)
-        self.redis.set("gas_station_standard_gas_price", hex(gas_station_gas_price))
+        await self.redis.set("gas_station_standard_gas_price", hex(gas_station_gas_price))
 
         async with self.pool.acquire() as con:
             await con.execute("INSERT INTO from_address_gas_price_whitelist (address) VALUES ($1)", FAUCET_ADDRESS)

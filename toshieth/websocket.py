@@ -12,12 +12,14 @@ from datetime import datetime
 from toshi.database import DatabaseMixin
 from toshi.handlers import RequestVerificationMixin
 from toshi.utils import validate_address, validate_hex_string
-from toshi.tasks import TaskHandler
+from trq.worker import Worker
+from toshi.redis import get_redis_connection
 from toshi.sofa import SofaPayment
 from toshi.utils import parse_int
 from toshi.ethereum.utils import encode_topic, decode_event_data
 from toshi.ethereum.mixin import EthereumMixin
 
+from toshi.config import config
 from toshi.log import log
 from toshi.jsonrpc.errors import JsonRPCInvalidParamsError
 from .jsonrpc import ToshiEthJsonRPC
@@ -123,13 +125,13 @@ class WebsocketJsonRPCHandler(ToshiEthJsonRPC):
                     status='unconfirmed', txHash=tx['hash'],
                     value=value, fromAddress=tx['from_address'],
                     toAddress=tx['to_address'],
-                    networkId=self.application.config['ethereum']['network_id']
+                    networkId=config['ethereum']['network_id']
                 ).render())
             payments.append(SofaPayment(
                 status=status, txHash=tx['hash'],
                 value=value, fromAddress=tx['from_address'],
                 toAddress=tx['to_address'],
-                networkId=self.application.config['ethereum']['network_id']
+                networkId=config['ethereum']['network_id']
             ).render())
 
         return payments
@@ -199,7 +201,7 @@ class WebsocketHandler(tornado.websocket.WebSocketHandler, DatabaseMixin, Ethere
             await db.commit()
 
         for address in addresses:
-            self.application.task_listener.subscribe(
+            self.application.worker.subscribe(
                 address, self.send_transaction_notification)
         self.subscription_ids.update(addresses)
 
@@ -212,7 +214,7 @@ class WebsocketHandler(tornado.websocket.WebSocketHandler, DatabaseMixin, Ethere
                     self.user_toshi_id, 'ws', self.session_id, address)
             await db.commit()
         for address in addresses:
-            self.application.task_listener.unsubscribe(
+            self.application.worker.unsubscribe(
                 address, self.send_transaction_notification)
 
     def send_transaction_notification(self, subscription_id, message):
@@ -241,7 +243,7 @@ class WebsocketHandler(tornado.websocket.WebSocketHandler, DatabaseMixin, Ethere
             if new_filter_id == filter_id:
                 await db.commit()
                 self.filter_ids.add(filter_id)
-        self.application.task_listener.filter(
+        self.application.worker.filter(
             filter_id, self.send_filter_notification)
         return filter_id
 
@@ -255,7 +257,7 @@ class WebsocketHandler(tornado.websocket.WebSocketHandler, DatabaseMixin, Ethere
             await db.commit()
 
         for filter_id in filter_ids:
-            self.application.task_listener.remove_filter(
+            self.application.worker.remove_filter(
                 filter_id, self.send_filter_notification)
 
     def send_filter_notification(self, filter_id, topic, data):
@@ -275,15 +277,18 @@ class WebsocketHandler(tornado.websocket.WebSocketHandler, DatabaseMixin, Ethere
             }
         })
 
-class WebsocketNotificationHandler(TaskHandler):
+class WebsocketNotificationHandler:
+
+    def __init__(self, task_id, worker):
+        self.worker = worker
 
     async def send_notification(self, subscription_id, message):
-        if subscription_id in self.application.callbacks:
+        if subscription_id in self.worker.callbacks:
             # ignore TokenPayments sent to websockets for now
             # as it currently breaks bots
             if message.startswith("SOFA::TokenPayment:"):
                 return
-            for callback in self.application.callbacks[subscription_id]:
+            for callback in self.worker.callbacks[subscription_id]:
                 try:
                     f = callback(subscription_id, message)
                     if asyncio.iscoroutine(f):
@@ -292,11 +297,50 @@ class WebsocketNotificationHandler(TaskHandler):
                     traceback.print_exc()
 
     async def send_filter_notification(self, filter_id, topic, data):
-        if filter_id in self.application.filter_callbacks:
-            for callback in self.application.filter_callbacks[filter_id]:
+        if filter_id in self.worker.filter_callbacks:
+            for callback in self.worker.filter_callbacks[filter_id]:
                 try:
                     f = callback(filter_id, topic, data)
                     if asyncio.iscoroutine(f):
                         await f
                 except:
                     traceback.print_exc()
+
+class EthServiceWorker(Worker):
+    def __init__(self):
+        super().__init__([(WebsocketNotificationHandler, self)],
+                         queue_name="ethservice")
+
+        self.callbacks = {}
+        self.filter_callbacks = {}
+
+    @property
+    def connection(self):
+        return get_redis_connection()
+
+    def subscribe(self, eth_address, callback):
+        """Registers a callback to receive transaction notifications for the
+        given toshi identifier.
+
+        The callback must accept 2 parameters, the transaction dict, and the
+        sender's toshi identifier"""
+        callbacks = self.callbacks.setdefault(eth_address, [])
+        if callback not in callbacks:
+            callbacks.append(callback)
+
+    def unsubscribe(self, eth_address, callback):
+        if eth_address in self.callbacks and callback in self.callbacks[eth_address]:
+            self.callbacks[eth_address].remove(callback)
+            if not self.callbacks[eth_address]:
+                self.callbacks.pop(eth_address)
+
+    def filter(self, filter_id, callback):
+        callbacks = self.filter_callbacks.setdefault(filter_id, [])
+        if callback not in callbacks:
+            callbacks.append(callback)
+
+    def remove_filter(self, filter_id, callback):
+        if filter_id in self.filter_callbacks and callback in self.filter_callbacks[filter_id]:
+            self.filter_callbacks[filter_id].remove(callback)
+            if not self.filter_callbacks[filter_id]:
+                self.filter_callbacks.pop(filter_id)

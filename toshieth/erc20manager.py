@@ -1,19 +1,16 @@
 import asyncio
 import logging
 
-from tornado.platform.asyncio import to_asyncio_future
 from toshi.log import configure_logger, log_unhandled_exceptions
 from toshi.utils import parse_int
 
-from toshi.database import DatabaseMixin
 from toshi.ethereum.mixin import EthereumMixin
 
-from toshi.tasks import TaskHandler
-from toshieth.tasks import TaskListenerApplication
+from toshieth.tasks import BaseEthServiceWorker, BaseTaskHandler
 
 log = logging.getLogger("toshieth.erc20manager")
 
-class ERC20UpdateHandler(DatabaseMixin, EthereumMixin, TaskHandler):
+class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
 
     @log_unhandled_exceptions(logger=log)
     async def update_token_cache(self, contract_address, *eth_addresses):
@@ -32,7 +29,7 @@ class ERC20UpdateHandler(DatabaseMixin, EthereumMixin, TaskHandler):
             for address in eth_addresses:
                 # data for `balanceOf(address)`
                 data = "0x70a08231000000000000000000000000" + address[2:]
-                f = to_asyncio_future(self.eth.eth_call(to_address=token['contract_address'], data=data))
+                f = asyncio.ensure_future(self.eth.eth_call(to_address=token['contract_address'], data=data))
                 futures.append((token['contract_address'], address, f))
 
         # wait for all the jsonrpc calls to finish
@@ -62,15 +59,15 @@ class ERC20UpdateHandler(DatabaseMixin, EthereumMixin, TaskHandler):
             await self.db.commit()
 
 
-class TaskManager(TaskListenerApplication):
+class TaskManager(BaseEthServiceWorker):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__([(ERC20UpdateHandler,)], *args, listener_id="erc20manager", **kwargs)
+    def __init__(self):
+        super().__init__([(ERC20UpdateHandler,)], queue_name="erc20")
         configure_logger(log)
 
-    def start(self):
-        return super().start()
-
 if __name__ == "__main__":
+    from toshieth.app import extra_service_config
+    extra_service_config()
     app = TaskManager()
-    app.run()
+    app.work()
+    asyncio.get_event_loop().run_forever()

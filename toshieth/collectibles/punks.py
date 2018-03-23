@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from toshi.log import configure_logger
+from toshi.config import config
 from toshi.ethereum.utils import data_decoder
 from ethereum.abi import decode_abi, process_type, decode_single
 from toshi.utils import parse_int
@@ -20,13 +22,13 @@ class CryptoPunksTaskManager(CollectiblesTaskManager):
         self._processing = False
         self.__call = 0
 
-    async def process_block(self):
+    async def process_block(self, blocknumber=None):
         if self._processing is True:
             return
         self._processing = True
         self.__call += 1
 
-        async with self.connection_pool.acquire() as con:
+        async with self.pool.acquire() as con:
             latest_block_number = await con.fetchval(
                 "SELECT blocknumber FROM last_blocknumber")
             if latest_block_number is None:
@@ -36,6 +38,8 @@ class CryptoPunksTaskManager(CollectiblesTaskManager):
 
             collectible = await con.fetchrow("SELECT * FROM collectibles WHERE contract_address = $1",
                                              CRYPTO_PUNKS_CONTRACT_ADDRESS)
+        if collectible is None:
+            return
 
         from_block_number = collectible['last_block'] + 1
 
@@ -96,12 +100,12 @@ class CryptoPunksTaskManager(CollectiblesTaskManager):
                     tx['done'] = True
                     log.info("CryptoPunk #{} -> {} -> {}".format(
                         tx['token_id'], tx['function'], tx['to_address']))
-                    token_image = self.config['collectibles']['image_format'].format(
+                    token_image = config['collectibles']['image_format'].format(
                         contract_address=CRYPTO_PUNKS_CONTRACT_ADDRESS,
                         token_id=tx['token_id'])
                     updates.append((CRYPTO_PUNKS_CONTRACT_ADDRESS, hex(tx['token_id']), tx['to_address'], token_image))
 
-            async with self.connection_pool.acquire() as con:
+            async with self.pool.acquire() as con:
                 await con.executemany(
                     "INSERT INTO collectible_tokens (contract_address, token_id, owner_address, image) "
                     "VALUES ($1, $2, $3, $4) "
@@ -111,13 +115,13 @@ class CryptoPunksTaskManager(CollectiblesTaskManager):
 
         ready = collectible['ready'] or to_block_number == latest_block_number
 
-        async with self.connection_pool.acquire() as con:
+        async with self.pool.acquire() as con:
             await con.execute("UPDATE collectibles SET last_block = $1, ready = $2 WHERE contract_address = $3",
                               to_block_number, ready, CRYPTO_PUNKS_CONTRACT_ADDRESS)
 
         self._processing = False
         if to_block_number < latest_block_number:
-            self.ioloop.add_callback(self.process_block)
+            asyncio.get_event_loop().create_task(self.process_block())
 
 if __name__ == "__main__":
     app = CryptoPunksTaskManager()

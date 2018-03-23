@@ -72,8 +72,6 @@ class ContractTest(EthServiceBaseTest):
     @requires_full_stack(parity=True)
     async def test_monitor_contract_events(self, *, parity):
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
-
         sourcecode1 = b"contract Test{event TestEvent(address sender,uint256 amount); event Something(uint256 one, bool two); function Test(){} function () payable {TestEvent(msg.sender,msg.value);}}"
         sourcecode2 = b"contract Test{event Something(uint256 one, bool two); function Test(){} function () payable {Something(1,true);}}"
         sourcecode3 = b"contract Test{event ArrayStuff(uint256[] arr, bytes8); function Test(){} function () payable {uint[] memory a = new uint[](2); a[0] = 0; a[1] = 1; ArrayStuff(a,'abcdefgh');}}"
@@ -143,8 +141,6 @@ class ContractTest(EthServiceBaseTest):
     @gen_test(timeout=60)
     @requires_full_stack(parity=True)
     async def test_fail_when_contract_has_no_default_function(self, *, parity):
-
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
 
         value = 10 ** 17
 

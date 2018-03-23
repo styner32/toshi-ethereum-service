@@ -4,55 +4,54 @@ import logging
 from tornado.httpclient import AsyncHTTPClient
 from tornado.escape import json_decode, json_encode
 
-from toshi.database import DatabaseMixin
-from toshi.redis import RedisMixin
 from toshieth.mixins import BalanceMixin
+from toshieth.tasks import (
+    BaseEthServiceWorker, BaseTaskHandler,
+    manager_dispatcher, erc20_dispatcher, eth_dispatcher, push_dispatcher
+)
 from toshi.ethereum.mixin import EthereumMixin
 from toshi.jsonrpc.errors import JsonRPCError
 from toshi.log import configure_logger, log_unhandled_exceptions
 from toshi.utils import parse_int
-from toshi.tasks import TaskHandler, TaskDispatcher
 from toshi.sofa import SofaPayment
 from toshi.ethereum.tx import (
-    create_transaction, add_signature_to_transaction, encode_transaction
+    create_transaction, encode_transaction
 )
 from toshi.ethereum.utils import data_decoder, data_encoder, decode_single_address
 
-from toshieth.tasks import TaskListenerApplication
 from toshieth.constants import TRANSFER_TOPIC, DEPOSIT_TOPIC, WITHDRAWAL_TOPIC, WETH_CONTRACT_ADDRESS
+from toshi.config import config
 
 log = logging.getLogger("toshieth.manager")
 
-class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceMixin, TaskHandler):
+ADDRESS_PROCESSING_QUEUE = {}
 
-    @property
-    def tasks(self):
-        if not hasattr(self, '_task_dispatcter'):
-            self._task_dispatcter = TaskDispatcher(self.listener)
-        return self._task_dispatcter
+class TransactionQueueHandler(EthereumMixin, BalanceMixin, BaseTaskHandler):
 
     async def process_transaction_queue(self, ethereum_address):
 
         # make sure we only run one check per address at a time
-        if ethereum_address not in self.listener.processing_queue:
-            self.listener.processing_queue[ethereum_address] = asyncio.Queue()
+        if ethereum_address not in ADDRESS_PROCESSING_QUEUE:
+            ADDRESS_PROCESSING_QUEUE[ethereum_address] = asyncio.Queue()
         else:
             f = asyncio.Future()
-            self.listener.processing_queue[ethereum_address].put_nowait(f)
+            ADDRESS_PROCESSING_QUEUE[ethereum_address].put_nowait(f)
             await f
 
         try:
             await self._process_transaction_queue(ethereum_address)
+        except asyncio.CancelledError:
+            pass
         except:
             log.exception("Unexpected issue calling process transaction queue")
         finally:
-            if self.listener.processing_queue[ethereum_address].empty():
-                del self.listener.processing_queue[ethereum_address]
+            if ADDRESS_PROCESSING_QUEUE[ethereum_address].empty():
+                del ADDRESS_PROCESSING_QUEUE[ethereum_address]
                 # if we didn't process the queue completely
                 # then schedule it again
 
             else:
-                f = self.listener.processing_queue[ethereum_address].get_nowait()
+                f = ADDRESS_PROCESSING_QUEUE[ethereum_address].get_nowait()
                 f.set_result(True)
 
     async def _process_transaction_queue(self, ethereum_address):
@@ -199,11 +198,11 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
                 if balance >= cost:
 
                     # check if gas price is high enough that it makes sense to send the transaction
-                    safe_gas_price = parse_int(self.redis.get('gas_station_safelow_gas_price'))
+                    safe_gas_price = parse_int(await self.redis.get('gas_station_safelow_gas_price'))
                     if safe_gas_price and safe_gas_price > gas_price:
                         log.debug("Not queuing tx '{}' as current gas price would not support it".format(transaction['hash']))
                         # retry this address in a minute
-                        self.tasks.process_transaction_queue(ethereum_address, delay=60)
+                        manager_dispatcher.process_transaction_queue(ethereum_address).delay(60)
                         # abort the rest of the processing
                         transactions_out = []
                         break
@@ -293,10 +292,10 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
         for address in addresses_to_check:
             # make sure we don't try process any contract deployments
             if address != "0x":
-                self.tasks.process_transaction_queue(address)
+                manager_dispatcher.process_transaction_queue(address)
 
         if transactions_out:
-            self.tasks.process_transaction_queue(ethereum_address)
+            manager_dispatcher.process_transaction_queue(ethereum_address)
 
     @log_unhandled_exceptions(logger=log)
     async def update_transaction(self, transaction_id, status):
@@ -357,7 +356,7 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
                 if tx_receipt is None:
                     log.error("Failed to get transaction receipt for confirmed transaction: {}".format(tx_receipt))
                     # requeue to try again
-                    self.tasks.update_transaction(transaction_id, status)
+                    manager_dispatcher.update_transaction(transaction_id, status)
                     return
             for token_tx in token_txs:
                 token_tx_status = status
@@ -385,9 +384,9 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
                         # there was no Transfer event matching this transaction
                         token_tx_status = 'error'
                     else:
-                        self.tasks.update_token_cache(token_tx['contract_address'],
-                                                      from_address,
-                                                      to_address)
+                        erc20_dispatcher.update_token_cache(token_tx['contract_address'],
+                                                            from_address,
+                                                            to_address)
                 if token_tx_status == 'confirmed':
                     data = {
                         "txHash": tx['hash'],
@@ -410,7 +409,7 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
                 if token_tx['contract_address'] == WETH_CONTRACT_ADDRESS and (from_address == "0x0000000000000000000000000000000000000000" or to_address == "0x0000000000000000000000000000000000000000"):
                     payment = SofaPayment(value=parse_int(token_tx['value']), txHash=tx['hash'],
                                           status=status, fromAddress=from_address, toAddress=to_address,
-                                          networkId=self.application.config['ethereum']['network_id'])
+                                          networkId=config['ethereum']['network_id'])
                     messages.append((from_address, to_address, status, payment.render()))
 
         else:
@@ -418,13 +417,13 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
             to_address = tx['to_address']
             payment = SofaPayment(value=parse_int(tx['value']), txHash=tx['hash'], status=status,
                                   fromAddress=from_address, toAddress=to_address,
-                                  networkId=self.application.config['ethereum']['network_id'])
+                                  networkId=config['ethereum']['network_id'])
             messages.append((from_address, to_address, status, payment.render()))
 
         # figure out what addresses need pns
         # from address always needs a pn
         for from_address, to_address, status, message in messages:
-            self.tasks.send_notification(from_address, message)
+            manager_dispatcher.send_notification(from_address, message)
 
             # no need to check to_address for contract deployments
             if to_address == "0x":
@@ -437,13 +436,24 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
                 # we only need to send the error to the sender, thus we
                 # only add 'to' if the new status is not an error
                 if status != 'error':
-                    self.tasks.send_notification(to_address, message)
+                    manager_dispatcher.send_notification(to_address, message)
             else:
-                self.tasks.send_notification(to_address, message)
+                manager_dispatcher.send_notification(to_address, message)
 
             # trigger a processing of the to_address's queue incase it has
             # things waiting on this transaction
-            self.tasks.process_transaction_queue(to_address)
+            manager_dispatcher.process_transaction_queue(to_address)
+
+    async def send_notification(self, address, message):
+        async with self.db:
+            rows = await self.db.fetch(
+                "SELECT DISTINCT(service) FROM notification_registrations WHERE eth_address = $1",
+                address)
+        services = [row['service'] for row in rows]
+        if 'ws' in services:
+            eth_dispatcher.send_notification(address, message)
+        if 'gcm' in services or 'apn' in services:
+            push_dispatcher.send_notification(address, message)
 
     async def sanity_check(self, frequency):
         async with self.db:
@@ -527,10 +537,10 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
         for address in addresses_to_check:
             # make sure we don't try process any contract deployments
             if address != "0x":
-                self.tasks.process_transaction_queue(address)
+                manager_dispatcher.process_transaction_queue(address)
 
         if frequency:
-            self.tasks.sanity_check(frequency, delay=frequency)
+            manager_dispatcher.sanity_check(frequency).delay(frequency)
 
     async def update_default_gas_price(self, frequency):
 
@@ -563,30 +573,31 @@ class TransactionQueueHandler(DatabaseMixin, RedisMixin, EthereumMixin, BalanceM
             if safelow_wei > standard_wei:
                 standard_wei = safelow_wei + 1000000000
 
-            self.redis.mset({'gas_station_safelow_gas_price': hex(safelow_wei),
-                             'gas_station_standard_gas_price': hex(standard_wei)})
+            await self.redis.mset(
+                'gas_station_safelow_gas_price', hex(safelow_wei),
+                'gas_station_standard_gas_price', hex(standard_wei))
 
         except:
             log.exception("Error updating default gas price from EthGasStation")
 
         if frequency:
-            self.tasks.update_default_gas_price(frequency, delay=frequency)
+            manager_dispatcher.update_default_gas_price(frequency).delay(frequency)
 
 
-class TaskManager(TaskListenerApplication):
+class TaskManager(BaseEthServiceWorker):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__([(TransactionQueueHandler,)], *args, listener_id="manager", **kwargs)
+    def __init__(self):
+        super().__init__([(TransactionQueueHandler,)], queue_name="manager")
         configure_logger(log)
-        self.task_listener.processing_queue = {}
 
-    def start(self):
-        # XXX: delay 10 so the redis connection is active before
-        # it gets called.. this shouldn't matter
-        self.task_listener.call_task('sanity_check', 60, delay=10)
-        self.task_listener.call_task('update_default_gas_price', 60, delay=10)
-        return super().start()
+    async def _work(self):
+        await super()._work()
+        manager_dispatcher.sanity_check(60).delay(60)
+        manager_dispatcher.update_default_gas_price(60).delay(60)
 
 if __name__ == "__main__":
+    from toshieth.app import extra_service_config
+    extra_service_config()
     app = TaskManager()
-    app.run()
+    app.work()
+    asyncio.get_event_loop().run_forever()

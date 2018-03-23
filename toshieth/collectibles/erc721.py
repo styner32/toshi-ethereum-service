@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from toshi.log import configure_logger
+from toshi.config import config
 from toshi.ethereum.utils import data_decoder
 from ethereum.abi import decode_abi, process_type, decode_single
 from toshi.utils import parse_int
@@ -9,25 +11,25 @@ log = logging.getLogger("toshieth.erc721")
 
 class ERC721TaskManager(CollectiblesTaskManager):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self):
+        super().__init__()
         configure_logger(log)
         self._processing = {}
 
-    async def process_block(self):
-        async with self.connection_pool.acquire() as con:
+    async def process_block(self, blocknumber=None):
+        async with self.pool.acquire() as con:
             latest_block_number = await con.fetchval(
                 "SELECT blocknumber FROM last_blocknumber")
         if latest_block_number is None:
             log.warning("no blocks processed by block monitor yet")
             return
 
-        async with self.connection_pool.acquire() as con:
+        async with self.pool.acquire() as con:
             contract_addresses = await con.fetch(
                 "SELECT contract_address FROM collectibles WHERE type = 1 OR type = 721")
 
         for row in contract_addresses:
-            self.ioloop.add_callback(self.process_block_for_contract, row['contract_address'])
+            asyncio.get_event_loop().create_task(self.process_block_for_contract(row['contract_address']))
 
     async def process_block_for_contract(self, contract_address):
         if contract_address in self._processing:
@@ -35,7 +37,7 @@ class ERC721TaskManager(CollectiblesTaskManager):
 
         self._processing[contract_address] = True
 
-        async with self.connection_pool.acquire() as con:
+        async with self.pool.acquire() as con:
             latest_block_number = await con.fetchval(
                 "SELECT blocknumber FROM last_blocknumber")
             collectible = await con.fetchrow("SELECT * FROM collectibles WHERE contract_address = $1",
@@ -105,12 +107,12 @@ class ERC721TaskManager(CollectiblesTaskManager):
 
                 log.debug("{} #{} -> {} -> {}".format(collectible['name'], token_id,
                                                       event['name'], to_address))
-                token_image = self.config['collectibles']['image_format'].format(
+                token_image = config['collectibles']['image_format'].format(
                     contract_address=contract_address,
                     token_id=token_id)
                 updates.append((contract_address, hex(token_id), to_address, token_image))
 
-            async with self.connection_pool.acquire() as con:
+            async with self.pool.acquire() as con:
                 await con.executemany(
                     "INSERT INTO collectible_tokens (contract_address, token_id, owner_address, image) "
                     "VALUES ($1, $2, $3, $4) "
@@ -121,7 +123,7 @@ class ERC721TaskManager(CollectiblesTaskManager):
         ready = collectible['ready'] or to_block_number == latest_block_number
 
         self.last_block = to_block_number
-        async with self.connection_pool.acquire() as con:
+        async with self.pool.acquire() as con:
             await con.execute("UPDATE collectibles SET last_block = $1, ready = $2 WHERE contract_address = $3",
                               to_block_number, ready, contract_address)
 
@@ -129,7 +131,7 @@ class ERC721TaskManager(CollectiblesTaskManager):
         #log.info("Processed blocks #{} -> #{} for {} in {} seconds".format(
         #    from_block_number, to_block_number, collectible['name'], time.time() - starttime))
         if to_block_number < latest_block_number:
-            self.ioloop.add_callback(self.process_block_for_contract, contract_address)
+            asyncio.ensure_future(self.process_block_for_contract(contract_address))
 
 if __name__ == "__main__":
     app = ERC721TaskManager()

@@ -85,7 +85,6 @@ class TransactionSkeletonTest(EthServiceBaseTest):
     @requires_full_stack(block_monitor=True, parity=True)
     async def test_create_and_send_transaction_with_max_value_to_contract(self, *, monitor, parity):
 
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
         contract = await Contract.from_source_code(
             SPLITTER_CONTRACT.encode('utf-8'), "Splitter",
             constructor_data=[[TEST_ADDRESS, TEST_ADDRESS_2, TEST_ADDRESS_3, TEST_ADDRESS_4]],

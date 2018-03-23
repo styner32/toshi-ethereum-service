@@ -38,7 +38,6 @@ class ERC721Test(EthServiceBaseTest):
     @gen_test(timeout=60)
     @requires_full_stack(parity=True, push_client=True, block_monitor=True, collectible_monitor=True)
     async def test_erc721_transfer(self, *, parity, push_client, monitor, collectible_monitor):
-        os.environ['ETHEREUM_NODE_URL'] = parity.dsn()['url']
         constructor_args = [
             ["TST", "Test ERC721 Token"]
         ]

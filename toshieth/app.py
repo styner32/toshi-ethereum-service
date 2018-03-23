@@ -1,17 +1,32 @@
-import toshi.web
+import asyncio
 import os
+import toshi.web
 
-from . import handlers
-from . import websocket
-from .tasks import EthServiceTaskListener
+from toshieth import handlers
+from toshieth import websocket
 
 from toshi.handlers import GenerateTimestamp
-from toshi.jsonrpc.client import JsonRPCClient
 
+from toshi.config import config
 from toshi.log import configure_logger
 from toshi.log import log as services_log
+from toshi.jsonrpc.client import JsonRPCClient
 
-from tornado.platform.asyncio import to_asyncio_future
+def extra_service_config():
+    config.set_from_os_environ('ethereum', 'url', 'ETHEREUM_NODE_URL')
+    config.set_from_os_environ('monitor', 'url', 'MONITOR_ETHEREUM_NODE_URL')
+    if 'ethereum' in config:
+        if 'ETHEREUM_NETWORK_ID' in os.environ:
+            config['ethereum']['network_id'] = os.environ['ETHEREUM_NETWORK_ID']
+        else:
+            config['ethereum']['network_id'] = asyncio.get_event_loop().run_until_complete(
+                JsonRPCClient(config['ethereum']['url']).net_version())
+
+    # push service config
+    config.set_from_os_environ('pushserver', 'url', 'PUSH_URL')
+    config.set_from_os_environ('pushserver', 'username', 'PUSH_USERNAME')
+    config.set_from_os_environ('pushserver', 'password', 'PUSH_PASSWORD')
+    config.set_from_os_environ('gcm', 'server_key', 'GCM_SERVER_KEY')
 
 urls = [
     (r"^/v1/tx/skel/?$", handlers.TransactionSkeletonHandler),
@@ -47,33 +62,13 @@ class Application(toshi.web.Application):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.task_listener = EthServiceTaskListener(self)
-
-    def process_config(self):
-        config = super().process_config()
-
-        if 'ETHEREUM_NODE_URL' in os.environ:
-            config['ethereum'] = {'url': os.environ['ETHEREUM_NODE_URL']}
-
-        if 'DEFAULT_GASPRICE' in os.environ:
-            if 'ethereum' not in config:
-                config['ethereum'] = {}
-            config['ethereum']['default_gasprice'] = os.environ['DEFAULT_GASPRICE']
-
-        if 'ethereum' in config:
-            if 'ETHEREUM_NETWORK_ID' in os.environ:
-                config['ethereum']['network_id'] = os.environ['ETHEREUM_NETWORK_ID']
-            else:
-                config['ethereum']['network_id'] = self.asyncio_loop.run_until_complete(
-                    to_asyncio_future(JsonRPCClient(config['ethereum']['url']).net_version()))
-
         configure_logger(services_log)
+        extra_service_config()
 
-        return config
-
-    def start(self):
-        self.task_listener.start_task_listener()
-        super().start()
+    async def _start(self):
+        await super()._start()
+        self.worker = websocket.EthServiceWorker()
+        self.worker.work()
 
 def main():
     app = Application(urls)

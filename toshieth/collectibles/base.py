@@ -1,28 +1,39 @@
+import asyncio
 import os
-from toshi.tasks import TaskHandler
-from toshieth.tasks import TaskListenerApplication
+from toshi.database import prepare_database
+from toshi.redis import prepare_redis
 from toshi.jsonrpc.client import JsonRPCClient
 
-class CollectiblesProcessingHandler(TaskHandler):
+from toshi.config import config
 
-    async def process_block(self, block_number=None):
-        self.listener.application.ioloop.add_callback(self.listener.application.process_block)
-
-class CollectiblesTaskManager(TaskListenerApplication):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__([(CollectiblesProcessingHandler,)], *args,
-                         listener_id=self.__class__.__name__, **kwargs)
-        self.eth = JsonRPCClient(self.config['ethereum']['url'], should_retry=False)
-        self.ioloop.add_callback(self.process_block)
-
-    def process_config(self):
-        config = super().process_config()
-        if 'COLLECTIBLE_IMAGE_FORMAT_STRING' in os.environ:
-            config['collectibles'] = {'image_format': os.environ['COLLECTIBLE_IMAGE_FORMAT_STRING']}
+def extra_service_config():
+    if 'COLLECTIBLE_IMAGE_FORMAT_STRING' in os.environ:
+        config.set_from_os_environ('collectibles', 'image_format', 'COLLECTIBLE_IMAGE_FORMAT_STRING')
+    else:
+        # avoid throwing an exception when running tests
+        import inspect
+        caller = inspect.currentframe()
+        while caller.f_back is not None:
+            caller = caller.f_back
+            if caller.f_globals['__name__'] == 'unittest.main':
+                break
         else:
             raise Exception("Missing $COLLECTIBLE_IMAGE_FORMAT_STRING")
-        return config
+
+class CollectiblesTaskManager:
+
+    def __init__(self):
+        extra_service_config()
+        self.eth = JsonRPCClient(config['ethereum']['url'], should_retry=False)
+        asyncio.get_event_loop().create_task(self._initialize())
+
+    async def _initialize(self):
+        self.pool = await prepare_database()
+        await prepare_redis()
+        asyncio.get_event_loop().create_task(self.process_block())
+
+    async def shutdown(self):
+        pass
 
     async def process_block(self):
         raise NotImplementedError()

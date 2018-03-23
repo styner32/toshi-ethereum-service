@@ -8,13 +8,12 @@ from toshi.ethereum.mixin import EthereumMixin
 from toshi.redis import RedisMixin
 from toshi.ethereum.utils import data_decoder, data_encoder, checksum_validate_address
 from ethereum.exceptions import InvalidTransaction
-from toshi.tasks import TaskDispatcher
 from functools import partial
 from toshi.utils import (
     validate_address, parse_int, validate_signature, validate_transaction_hash
 )
 from toshi.ethereum.tx import (
-    DEFAULT_STARTGAS, DEFAULT_GASPRICE, create_transaction,
+    DEFAULT_GASPRICE, create_transaction,
     encode_transaction, decode_transaction, is_transaction_signed,
     signature_from_transaction, add_signature_to_transaction,
     transaction_to_json, calculate_transaction_hash
@@ -23,8 +22,10 @@ from toshi.ethereum.utils import personal_ecrecover
 
 from toshi.log import log
 
-from .mixins import BalanceMixin
-from .utils import RedisLock, RedisLockException, database_transaction_to_rlp_transaction
+from toshi.config import config
+from toshieth.mixins import BalanceMixin
+from toshieth.utils import RedisLock, RedisLockException, database_transaction_to_rlp_transaction
+from toshieth.tasks import manager_dispatcher, erc20_dispatcher
 
 class JsonRPCInsufficientFundsError(JsonRPCError):
     def __init__(self, *, request=None, data=None):
@@ -41,14 +42,8 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         self.request = request
 
     @property
-    def tasks(self):
-        if not hasattr(self, '_task_dispatcher'):
-            self._task_dispatcher = TaskDispatcher(self.application.task_listener)
-        return self._task_dispatcher
-
-    @property
     def network_id(self):
-        return parse_int(self.application.config['ethereum']['network_id'])
+        return parse_int(config['ethereum']['network_id'])
 
     async def get_balance(self, address):
 
@@ -79,7 +74,6 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                 "ORDER BY nonce DESC",
                 address)
 
-        #nonce = nonce[0]['nonce'] if nonce else None
         if nonce is not None:
             # return the next usable nonce
             nonce = nonce + 1
@@ -119,11 +113,11 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
 
         if gas_price is None:
             # try and use cached gas station gas price
-            gas_station_gas_price = self.redis.get('gas_station_standard_gas_price')
+            gas_station_gas_price = await self.redis.get('gas_station_standard_gas_price')
             if gas_station_gas_price:
                 gas_price = parse_int(gas_station_gas_price)
             if gas_price is None:
-                gas_price = self.application.config['ethereum'].getint('default_gasprice', DEFAULT_GASPRICE)
+                gas_price = config['ethereum'].getint('default_gasprice', DEFAULT_GASPRICE)
         else:
             gas_price = parse_int(gas_price)
             if gas_price is None:
@@ -324,9 +318,10 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         to_address = data_encoder(tx.to)
 
         # prevent spamming of transactions with the same nonce from the same sender
-        with RedisLock(self.redis, "{}:{}".format(from_address, tx.nonce),
-                       raise_when_locked=partial(JsonRPCInvalidParamsError, data={'id': 'invalid_nonce', 'message': 'Nonce already used'}),
-                       ex=5):
+        async with RedisLock(
+                "{}:{}".format(from_address, tx.nonce),
+                raise_when_locked=partial(JsonRPCInvalidParamsError, data={'id': 'invalid_nonce', 'message': 'Nonce already used'}),
+                ex=5):
 
             # check for transaction overwriting
             async with self.db:
@@ -367,7 +362,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
 
             if existing:
                 log.info("Setting tx '{}' to error due to forced overwrite".format(existing['hash']))
-                self.tasks.update_transaction(existing['transaction_id'], 'error')
+                manager_dispatcher.update_transaction(existing['transaction_id'], 'error')
 
             data = data_encoder(tx.data)
             if data and \
@@ -413,7 +408,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                 await self.db.commit()
 
             # trigger processing the transaction queue
-            self.tasks.process_transaction_queue(from_address)
+            manager_dispatcher.process_transaction_queue(from_address)
             # analytics
             # use notification registrations to try find toshi ids for users
             if self.user_toshi_id:
@@ -478,7 +473,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                                {'id': 'permission_denied', 'message': 'Permission Denied'})
 
         log.info("Setting tx '{}' to error due to user cancelation".format(tx['hash']))
-        self.tasks.update_transaction(tx['transaction_id'], 'error')
+        manager_dispatcher.update_transaction(tx['transaction_id'], 'error')
 
     async def get_token_balances(self, eth_address, token_address=None):
         if not validate_address(eth_address):
@@ -495,9 +490,9 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
 
             if not registered:
                 try:
-                    with RedisLock(self.redis, "token_balance_update:{}".format(eth_address)):
+                    async with RedisLock("token_balance_update:{}".format(eth_address)):
                         try:
-                            await self.tasks.update_token_cache("*", eth_address)
+                            await erc20_dispatcher.update_token_cache("*", eth_address)
                         except:
                             log.exception("Error updating token cache")
                             raise

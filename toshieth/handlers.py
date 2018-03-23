@@ -13,9 +13,10 @@ from toshi.handlers import RequestVerificationMixin, SimpleFileHandler
 from toshi.utils import validate_address, parse_int
 from toshi.log import log, log_headers_on_error
 
-from .mixins import BalanceMixin
-from .jsonrpc import ToshiEthJsonRPC
-from .utils import database_transaction_to_rlp_transaction
+from toshi.config import config
+from toshieth.mixins import BalanceMixin
+from toshieth.jsonrpc import ToshiEthJsonRPC
+from toshieth.utils import database_transaction_to_rlp_transaction
 from toshi.ethereum.tx import transaction_to_json, DEFAULT_GASPRICE
 from tornado.escape import json_encode
 from tornado.web import HTTPError
@@ -209,7 +210,7 @@ class TransactionHandler(EthereumMixin, DatabaseMixin, BaseHandler):
                 tx = transaction_to_json(database_transaction_to_rlp_transaction(row))
             if row['status'] == 'error':
                 tx['error'] = True
-            payment = SofaPayment.from_transaction(tx, networkId=self.application.config['ethereum']['network_id'])
+            payment = SofaPayment.from_transaction(tx, networkId=config['ethereum']['network_id'])
             message = payment.render()
             self.set_header('Content-Type', 'text/plain')
             self.write(message.encode('utf-8'))
@@ -318,15 +319,17 @@ class AddressHandler(DatabaseMixin, BaseHandler):
 
 class GasPriceHandler(RedisMixin, BaseHandler):
 
-    def get(self):
+    async def get(self):
 
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header("Access-Control-Allow-Headers", "x-requested-with")
         self.set_header('Access-Control-Allow-Methods', 'GET')
 
-        gas_station_gas_price = self.redis.get('gas_station_standard_gas_price')
+        gas_station_gas_price = await self.redis.get('gas_station_standard_gas_price')
         if gas_station_gas_price is None:
-            gas_station_gas_price = hex(self.application.config['ethereum'].getint('default_gasprice', DEFAULT_GASPRICE))
+            gas_station_gas_price = hex(config['ethereum'].getint('default_gasprice', DEFAULT_GASPRICE))
+        else:
+            gas_station_gas_price = gas_station_gas_price.decode('utf-8')
         self.write({
             "gas_price": gas_station_gas_price
         })
@@ -429,9 +432,9 @@ class PNDeregistrationHandler(RequestVerificationMixin, AnalyticsMixin, Database
 
 class StatusHandler(RedisMixin, BaseHandler):
 
-    def get(self):
-        status = self.redis.get("monitor_sanity_check_ok")
-        if status == "OK":
+    async def get(self):
+        status = await self.redis.get("monitor_sanity_check_ok")
+        if status == b"OK":
             self.write("OK")
         else:
             self.write("MONITOR SANITY CHECK FAILED")
