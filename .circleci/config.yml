@@ -1,0 +1,138 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/python:3.6.4-stretch
+    steps:
+      - checkout
+      - restore_cache:
+          key: v1-ethminer
+      - run:
+          name: Install ethminer
+          command: |
+            sudo apt-get install libleveldb-dev libcurl4-openssl-dev libmicrohttpd-dev libudev-dev cmake
+            if [[ ! -d cpp-ethereum ]]; then
+                git clone https://github.com/ethereum/cpp-ethereum.git
+                cd cpp-ethereum/
+                git checkout 38ac899bf30b87ec76f0e940674046bed952b229
+                git submodule update --init
+                ./scripts/install_deps.sh
+                cmake -H. -Bbuild
+                cd build/ethminer
+                make
+                cd ../../..
+            fi
+            cd cpp-ethereum/build/ethminer
+            sudo make install
+            ethminer --version
+      - save_cache:
+          key: v1-ethminer
+          paths:
+            - cpp-ethereum
+      - restore_cache:
+          key: v1-solc
+      - run:
+          name: Install solc
+          command: |
+            if [[ ! -d solidity ]]; then
+                git clone --recursive https://github.com/ethereum/solidity.git
+                cd solidity
+                git submodule update --init --recursive
+                ./scripts/install_deps.sh
+                mkdir -p build
+                cd build
+                cmake .. -DCMAKE_BUILD_TYPE="Release"
+                make -j2
+                cd ../..
+            fi
+            cd solidity/build
+            sudo make install
+            solc --version
+      - save_cache:
+          key: v1-solc
+          paths:
+            - solidity
+      - restore_cache:
+          key: ethash
+      - run:
+          name: Generate ethash
+          command: 'if [[ ! -d ~/.ethash ]]; then ethminer -D 0; fi'
+      - save_cache:
+          key: ethash
+          paths:
+            - ~/.ethash
+      - run:
+          name: Install Postgresql
+          command: sudo apt-get install postgresql
+      - run:
+          name: Install Redis
+          command: sudo apt-get install redis-server
+      - run:
+          name: Install Parity
+          command: |
+            wget http://d1h4xl4cr1h0mo.cloudfront.net/v1.9.5/x86_64-unknown-debian-gnu/parity_1.9.5_debian_amd64.deb
+            sudo dpkg -i parity_1.9.5_debian_amd64.deb
+            parity --version
+      - run:
+          name: Install Test Requirements
+          command: |
+            sudo pip install -r requirements-testing.txt
+            ./configure_environment.sh
+            sudo pip install --upgrade -r requirements.txt
+      - run:
+          name: Run Tests
+          command: python -m tornado.testing discover -s toshieth/test
+  deploy_internal:
+    machine: true
+    steps:
+      - checkout
+      - run:
+        name: Deploy
+        command: git push -f git@heroku.com:token-eth-service-development.git master
+  deploy_production:
+    machine: true
+    steps:
+      - checkout
+      - run:
+        name: Deploy Development
+        command: git push -f git@heroku.com:token-eth-service.git production:master
+      - run:
+        name: Deploy Production
+        command: git push -f git@heroku.com:toshi-eth-service.git production:master
+  docs:
+    machine: true
+    steps:
+      - checkout
+      - run:
+          name: "Install aglio"
+          command: 'npm install -g aglio'
+      - run:
+          name: "Pull docs"
+          command: 'git clone --depth 1 git@github.com:toshiapp/docs.git $HOME/docs'
+      - run:
+          name: "Deploy docs"
+          command: '$HOME/docs/deploy-blueprint.sh $CIRCLE_PROJECT_REPONAME docs/api.apib $CIRCLE_SHA1'
+
+workflows:
+  version: 2
+  test_build_docs_and_deploy:
+    jobs:
+      - build
+      - docs:
+          requires:
+            - build
+          filters:
+            branches:
+              only: production
+      - deploy_internal:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
+      - deploy_production:
+          requires:
+            - build
+          filters:
+            branches:
+              only: production
