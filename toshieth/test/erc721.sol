@@ -12,7 +12,7 @@ contract NonFungibleToken {
     mapping(address => uint[]) internal ownerToTokensOwned;
     mapping(uint => uint) internal tokenIdToOwnerArrayIndex;
 
-    event Transfer(address _from, address _to, uint256 _tokenId);
+    event Transfer(address indexed _from, address indexed _to, uint256 _tokenId);
     //address indexed _from,
     //address indexed _to
 

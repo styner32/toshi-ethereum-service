@@ -169,8 +169,8 @@ def requires_block_monitor(func=None, cls=toshieth.monitor.BlockMonitor, pass_mo
 
 # overrides the start method to not trigger things that should only run when live
 class TestTaskManager(toshieth.manager.TaskManager):
-    def work(self):
-        return asyncio.get_event_loop().create_task(self._work())
+    def start_interval_services(self):
+        pass
 
 def requires_task_manager(func=None, pass_manager=False):
     """Used to ensure all database connections are returned to the pool

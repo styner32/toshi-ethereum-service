@@ -590,10 +590,13 @@ class TaskManager(BaseEthServiceWorker):
         super().__init__([(TransactionQueueHandler,)], queue_name="manager")
         configure_logger(log)
 
-    async def _work(self):
-        await super()._work()
+    def start_interval_services(self):
         manager_dispatcher.sanity_check(60).delay(60)
         manager_dispatcher.update_default_gas_price(60).delay(60)
+
+    async def _work(self):
+        await super()._work()
+        self.start_interval_services()
 
 if __name__ == "__main__":
     from toshieth.app import extra_service_config

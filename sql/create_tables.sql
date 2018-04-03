@@ -105,11 +105,12 @@ CREATE TABLE IF NOT EXISTS collectibles (
 
 CREATE TABLE IF NOT EXISTS collectible_transfer_events (
     collectible_transfer_event_id SERIAL PRIMARY KEY,
+    collectible_address VARCHAR,
     contract_address VARCHAR,
     name VARCHAR DEFAULT 'Transfer',
     topic_hash VARCHAR DEFAULT '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
     arguments VARCHAR[] DEFAULT ARRAY['address','address','uint256'],
-    indexed_arguments BOOLEAN[] DEFAULT ARRAY[FALSE, FALSE, FALSE],
+    indexed_arguments BOOLEAN[] DEFAULT ARRAY[TRUE, TRUE, FALSE],
     to_address_offset INTEGER DEFAULT 1,
     token_id_offset INTEGER DEFAULT 2
 );
@@ -152,4 +153,6 @@ CREATE INDEX IF NOT EXISTS idx_tokens_contract_address ON tokens (contract_addre
 CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address ON token_balances (eth_address);
 CREATE INDEX IF NOT EXISTS idx_token_registrations_last_queried ON token_registrations (last_queried ASC);
 
-UPDATE database_version SET version_number = 15;
+CREATE INDEX IF NOT EXISTS idx_collectible_transfer_events_collectible_address ON collectible_transfer_events (collectible_address);
+
+UPDATE database_version SET version_number = 16;
