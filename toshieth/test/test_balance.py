@@ -72,12 +72,12 @@ class BalanceTest(FaucetMixin, AsyncHandlerTest):
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                tx1_hash, FAUCET_ADDRESS, addr, 0, val, DEFAULT_STARTGAS, DEFAULT_GASPRICE)
+                tx1_hash, FAUCET_ADDRESS, addr, 0, hex(val), hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE))
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx2_hash, FAUCET_ADDRESS, addr, 1, val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx2_hash, FAUCET_ADDRESS, addr, 1, hex(val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'unconfirmed')
 
         resp = await self.fetch('/balance/{}'.format(addr))
@@ -105,19 +105,19 @@ class BalanceTest(FaucetMixin, AsyncHandlerTest):
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                tx1_hash, FAUCET_ADDRESS, addr, 0, val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE)
+                tx1_hash, FAUCET_ADDRESS, addr, 0, hex(val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE))
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx2_hash, FAUCET_ADDRESS, addr, 1, val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx2_hash, FAUCET_ADDRESS, addr, 1, hex(val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'unconfirmed')
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx3_hash, FAUCET_ADDRESS, addr, 2, val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx3_hash, FAUCET_ADDRESS, addr, 2, hex(val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'error')
 
         resp = await self.fetch('/balance/{}'.format(addr))
@@ -147,19 +147,19 @@ class BalanceTest(FaucetMixin, AsyncHandlerTest):
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                tx1_hash, addr, addr2, 0, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE)
+                tx1_hash, addr, addr2, 0, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE))
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx2_hash, addr, addr2, 1, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx2_hash, addr, addr2, 1, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'queued')
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx3_hash, addr, addr2, 2, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx3_hash, addr, addr2, 2, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'unconfirmed')
 
         resp = await self.fetch('/balance/{}'.format(addr))
@@ -213,24 +213,24 @@ class BalanceTest2(FaucetMixin, AsyncHandlerTest):
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx0_hash, addr, addr2, 0, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE, 'confirmed')
+                tx0_hash, addr, addr2, 0, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE), 'confirmed')
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                tx1_hash, addr, addr2, 0, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE)
+                tx1_hash, addr, addr2, 0, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE))
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx2_hash, addr, addr2, 1, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx2_hash, addr, addr2, 1, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'queued')
             await con.execute(
                 "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                tx3_hash, addr, addr2, 2, sent_val,
-                DEFAULT_STARTGAS, DEFAULT_GASPRICE,
+                tx3_hash, addr, addr2, 2, hex(sent_val),
+                hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE),
                 'unconfirmed')
 
         resp = await self.fetch('/{}'.format(addr))

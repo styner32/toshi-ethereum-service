@@ -261,8 +261,8 @@ class WebsocketTest(FaucetMixin, EthServiceBaseTest):
                     await con.execute(
                         "INSERT INTO transactions (hash, from_address, to_address, nonce, value, gas, gas_price, status, created, updated) "
                         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                        tx_hash, from_addr, addr, 1, value,
-                        DEFAULT_STARTGAS, DEFAULT_GASPRICE, status,
+                        tx_hash, from_addr, addr, 1, hex(value),
+                        hex(DEFAULT_STARTGAS), hex(DEFAULT_GASPRICE), status,
                         datetime.utcfromtimestamp(created),
                         datetime.utcfromtimestamp(updated))
 
