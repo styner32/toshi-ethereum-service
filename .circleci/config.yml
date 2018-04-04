@@ -36,16 +36,15 @@ jobs:
           command: |
             if [[ ! -d solidity ]]; then
                 git clone --recursive https://github.com/ethereum/solidity.git
-                cd solidity
-                git submodule update --init --recursive
-                ./scripts/install_deps.sh
-                mkdir -p build
-                cd build
-                cmake .. -DCMAKE_BUILD_TYPE="Release"
-                make -j2
-                cd ../..
             fi
-            cd solidity/build
+            cd solidity
+            git pull origin develop
+            git submodule update --init --recursive
+            ./scripts/install_deps.sh
+            mkdir -p build
+            cd build
+            cmake .. -DCMAKE_BUILD_TYPE="Release"
+            make -j2
             sudo make install
             solc --version
       - save_cache:
