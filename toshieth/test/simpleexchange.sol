@@ -1,4 +1,4 @@
-pragma solidity ^0.4.19;
+pragma solidity ^0.4.21;
 
 contract Token {
 
@@ -18,44 +18,38 @@ contract SimpleExchange {
   address public ZRX_CONTRACT;
   uint256 public ZRX_COST = 10 ** 18;
 
-  struct Order {
-    address _src;
-    address _dst;
-    uint256 _src_val;
-    uint256 _dst_val;
-  }
+  mapping (bytes32 => bool) orders;
 
-  mapping (address => Order) orders;
-
-  function SimpleExchange(address _zrx_contract) {
+  constructor(address _zrx_contract) {
     ZRX_CONTRACT = _zrx_contract;
   }
 
   function createOrder(address _src, uint256 _src_val, address _dst, uint256 _dst_val) public {
     require(_src != 0);
     require(_dst != 0);
-    orders[msg.sender] = Order(_src, _dst, _src_val, _dst_val);
+    bytes32 hash = sha3(msg.sender, _src, _src_val, _dst, _dst_val);
+    orders[hash] = true;
   }
 
-  function fillOrder(address _orderer) public {
-    require(orders[_orderer]._src != 0);
-    Order storage order = orders[_orderer];
-    Token srcToken = Token(order._src);
-    Token dstToken = Token(order._dst);
+  function fillOrder(address _orderer, address _src, uint256 _src_val, address _dst, uint256 _dst_val) public {
+    bytes32 hash = sha3(_orderer, _src, _src_val, _dst, _dst_val);
+    require(orders[hash] != false);
+    orders[hash] = false;
+    Token srcToken = Token(_src);
+    Token dstToken = Token(_dst);
     Token zrxToken = Token(ZRX_CONTRACT);
-    require(srcToken.balanceOf(_orderer) >= order._src_val);
-    require(dstToken.balanceOf(msg.sender) >= order._dst_val);
+    require(srcToken.balanceOf(_orderer) >= _src_val);
+    require(dstToken.balanceOf(msg.sender) >= _dst_val);
     require(zrxToken.balanceOf(_orderer) >= ZRX_COST);
     require(zrxToken.balanceOf(msg.sender) >= ZRX_COST);
-    require(zrxToken.allowance(msg.sender, this) >= ZRX_COST);
+    require(srcToken.allowance(_orderer, this) >= _src_val);
+    require(dstToken.allowance(msg.sender, this) >= _dst_val);
     require(zrxToken.allowance(_orderer, this) >= ZRX_COST);
-    require(srcToken.allowance(msg.sender, this) >= order._src_val);
-    require(dstToken.allowance(_orderer, this) >= order._dst_val);
+    require(zrxToken.allowance(msg.sender, this) >= ZRX_COST);
 
-    srcToken.transferFrom(_orderer, msg.sender, order._src_val);
-    dstToken.transferFrom(msg.sender, _orderer, order._dst_val);
+    srcToken.transferFrom(_orderer, msg.sender, _src_val);
+    dstToken.transferFrom(msg.sender, _orderer, _dst_val);
     zrxToken.transferFrom(msg.sender, this, ZRX_COST);
     zrxToken.transferFrom(_orderer, this, ZRX_COST);
-    delete orders[_orderer];
   }
 }

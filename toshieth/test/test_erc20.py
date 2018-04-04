@@ -391,7 +391,8 @@ class ERC20Test(EthServiceBaseTest):
 
         await exchange.createOrder.set_sender(TEST_PRIVATE_KEY)(
             ken.address, 5 * 10 ** 18, tok.address, 5 * 10 ** 18)
-        await exchange.fillOrder.set_sender(TEST_PRIVATE_KEY_2)(TEST_ADDRESS)
+        await exchange.fillOrder.set_sender(TEST_PRIVATE_KEY_2)(
+            TEST_ADDRESS, ken.address, 5 * 10 ** 18, tok.address, 5 * 10 ** 18)
 
         await monitor.filter_poll()
         await asyncio.sleep(0.1)
@@ -497,7 +498,8 @@ class ERC20Test(EthServiceBaseTest):
 
         await exchange.createOrder.set_sender(TEST_PRIVATE_KEY)(
             weth.address, 5 * 10 ** 18, tok.address, 5 * 10 ** 18)
-        await exchange.fillOrder.set_sender(TEST_PRIVATE_KEY_2)(TEST_ADDRESS)
+        await exchange.fillOrder.set_sender(TEST_PRIVATE_KEY_2)(
+            TEST_ADDRESS, weth.address, 5 * 10 ** 18, tok.address, 5 * 10 ** 18)
 
         await monitor.filter_poll()
         await asyncio.sleep(0.1)
@@ -648,7 +650,8 @@ class ERC20Test(EthServiceBaseTest):
         raw_tx = await exchange.createOrder.get_raw_tx.set_sender(TEST_PRIVATE_KEY)(
             weth.address, 5 * 10 ** 18, tok.address, 5 * 10 ** 18)
         await self.send_raw_tx(raw_tx)
-        raw_tx = await exchange.fillOrder.get_raw_tx.set_sender(TEST_PRIVATE_KEY_2)(TEST_ADDRESS)
+        raw_tx = await exchange.fillOrder.get_raw_tx.set_sender(TEST_PRIVATE_KEY_2)(
+            TEST_ADDRESS, weth.address, 5 * 10 ** 18, tok.address, 5 * 10 ** 18)
         await self.send_raw_tx(raw_tx)
 
         await monitor.filter_poll()
