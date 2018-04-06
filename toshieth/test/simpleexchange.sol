@@ -20,7 +20,7 @@ contract SimpleExchange {
 
   mapping (bytes32 => bool) orders;
 
-  constructor(address _zrx_contract) {
+  function SimpleExchange(address _zrx_contract) {
     ZRX_CONTRACT = _zrx_contract;
   }
 
