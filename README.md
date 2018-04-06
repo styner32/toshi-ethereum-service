@@ -55,12 +55,9 @@ heroku addons:create heroku-redis:hobby-dev
 #### Buildpacks
 
 ```
-heroku buildpacks:add https://github.com/debitoor/ssh-private-key-buildpack.git
 heroku buildpacks:add https://github.com/weibeld/heroku-buildpack-run.git
-heroku buildpacks:add https://github.com/tristan/heroku-buildpack-pgsql-stunnel.git
 heroku buildpacks:add heroku/python
 
-heroku config:set SSH_KEY=$(cat path/to/your/keys/id_rsa | base64)
 heroku config:set BUILDPACK_RUN=configure_environment.sh
 ```
 
@@ -70,7 +67,6 @@ heroku config:set BUILDPACK_RUN=configure_environment.sh
 heroku config:set PUSH_URL=<toshi-push-service-url>
 heroku config:set PUSH_USERNAME=<toshi-push-service-username>
 heroku config:set PUSH_PASSWORD=<toshi-push-service-password>
-heroku config:set PGSQL_STUNNEL_ENABLED=1
 heroku config:set ETHEREUM_NODE_URL=<jsonrpc-url>
 heroku config:set COLLECTIBLE_IMAGE_FORMAT_STRING=<python style format string with {contract_address} and {token_id} fields>
 ```
