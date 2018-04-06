@@ -38,7 +38,8 @@ jobs:
                 git clone --recursive https://github.com/ethereum/solidity.git
             fi
             cd solidity
-            git pull origin develop
+            git fetch
+            git checkout $(git log --tags --simplify-by-decoration --pretty="%d" | head -n 1 | grep -o 'v[0-9.]\+')
             git submodule update --init --recursive
             ./scripts/install_deps.sh
             mkdir -p build
