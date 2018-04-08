@@ -136,7 +136,8 @@ class ERC721Test(EthServiceBaseTest):
         self.assertEquals(result, len(tokens))
 
         await monitor.block_check()
-        await asyncio.sleep(0.1)
+        # note: giving 0.2 otherwise this test randomly fails
+        await asyncio.sleep(0.2)
 
         resp = await self.fetch("/collectibles/{}/{}".format(FAUCET_ADDRESS, contract.address))
 

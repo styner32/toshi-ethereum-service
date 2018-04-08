@@ -208,12 +208,17 @@ class BlockMonitor:
                                     eth_dispatcher.send_filter_notification(
                                         filter['filter_id'], filter['topic'], event['data'])
 
-                self.last_block_number += 1
-                async with self.pool.acquire() as con:
-                    await con.execute("UPDATE last_blocknumber SET blocknumber = $1",
-                                      self.last_block_number)
+                # update the latest block number, only if it is larger than the
+                # current block number.
+                block_number = parse_int(block['number'])
+                if self.last_block_number < block_number:
+                    self.last_block_number = block_number
+                    async with self.pool.acquire() as con:
+                        await con.execute("UPDATE last_blocknumber SET blocknumber = $1 "
+                                          "WHERE blocknumber < $1",
+                                          block_number)
 
-                collectibles_dispatcher.notify_new_block(self.last_block_number)
+                collectibles_dispatcher.notify_new_block(block_number)
 
             else:
 
