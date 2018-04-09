@@ -71,18 +71,18 @@ jobs:
     steps:
       - checkout
       - run:
-        name: Deploy
-        command: git push -f git@heroku.com:token-eth-service-development.git master
+          name: Deploy
+          command: git push -f git@heroku.com:token-eth-service-development.git master
   deploy_production:
     machine: true
     steps:
       - checkout
       - run:
-        name: Deploy Development
-        command: git push -f git@heroku.com:token-eth-service.git production:master
+          name: Deploy Development
+          command: git push -f git@heroku.com:token-eth-service.git production:master
       - run:
-        name: Deploy Production
-        command: git push -f git@heroku.com:toshi-eth-service.git production:master
+          name: Deploy Production
+          command: git push -f git@heroku.com:toshi-eth-service.git production:master
   docs:
     machine: true
     steps:
