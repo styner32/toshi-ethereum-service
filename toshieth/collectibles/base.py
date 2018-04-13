@@ -28,7 +28,7 @@ class CollectiblesTaskManager:
         asyncio.get_event_loop().create_task(self._initialize())
 
     async def _initialize(self):
-        self.pool = await prepare_database()
+        self.pool = await prepare_database(handle_migration=False)
         await prepare_redis()
         asyncio.get_event_loop().create_task(self.process_block())
 

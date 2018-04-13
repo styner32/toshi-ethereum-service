@@ -33,6 +33,7 @@ class ERC721TaskManager(CollectiblesTaskManager):
 
     async def process_block_for_contract(self, collectible_address):
         if collectible_address in self._processing:
+            log.warning("Already processing {}".format(collectible_address))
             return
 
         self._processing[collectible_address] = True
@@ -42,6 +43,11 @@ class ERC721TaskManager(CollectiblesTaskManager):
                 "SELECT blocknumber FROM last_blocknumber")
             collectible = await con.fetchrow("SELECT * FROM collectibles WHERE contract_address = $1",
                                              collectible_address)
+            if collectible is None:
+                log.error("Unable to find collectible with contract_address {}".format(collectible_address))
+                del self._processing[collectible_address]
+                return
+
             if collectible['type'] == 1:
                 events = await con.fetch("SELECT * FROM collectible_transfer_events "
                                          "WHERE collectible_address = $1",
@@ -64,6 +70,7 @@ class ERC721TaskManager(CollectiblesTaskManager):
 
         if latest_block_number < from_block_number:
             del self._processing[collectible_address]
+            log.info("Aborting {} because latest block number < collectible's next block".format(collectible_address))
             return
 
         to_block_number = min(from_block_number + 1000, latest_block_number)
@@ -104,6 +111,10 @@ class ERC721TaskManager(CollectiblesTaskManager):
                                 arguments.append(data.pop(0))
                     except:
                         log.exception("Error compiling event data")
+                        log.info("EVENT: {}".format(event))
+                        log.info("LOG: {}".format(_log))
+                        del self._processing[collectible_address]
+                        return
 
                     to_address = arguments[event['to_address_offset']]
                     token_id = parse_int(arguments[event['token_id_offset']])
@@ -132,10 +143,8 @@ class ERC721TaskManager(CollectiblesTaskManager):
                               to_block_number, ready, collectible_address)
 
         del self._processing[collectible_address]
-        #log.info("Processed blocks #{} -> #{} for {} in {} seconds".format(
-        #    from_block_number, to_block_number, collectible['name'], time.time() - starttime))
         if to_block_number < latest_block_number:
-            asyncio.ensure_future(self.process_block_for_contract(contract_address))
+            asyncio.get_event_loop().create_task(self.process_block_for_contract(collectible_address))
 
 if __name__ == "__main__":
     app = ERC721TaskManager()
