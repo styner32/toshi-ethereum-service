@@ -396,7 +396,7 @@ class TransactionQueueHandler(EthereumMixin, BalanceMixin, BaseTaskHandler):
                         "value": token_tx['value'],
                         "contractAddress": token_tx['contract_address']
                     }
-                    messages.append((from_address, to_address, token_tx_status, "SOFA::TokenPayment:" + json_encode(data)))
+                    messages.append((from_address, to_address, token_tx_status, "SOFA::TokenPayment: " + json_encode(data)))
                 async with self.db:
                     await self.db.execute(
                         "UPDATE token_transactions SET status = $1 "

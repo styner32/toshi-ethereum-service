@@ -83,7 +83,16 @@ class ERC20Test(EthServiceBaseTest):
         await asyncio.sleep(0.1)
 
         resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
-
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        # ensure empty after initial trigger
+        self.assertEqual(len(body['tokens']), 0)
+        # expect len(token_args) - 1 PNs for token updates
+        for _ in range(len(token_args) - 1):
+            pn = await push_client.get()
+            print(pn)
+        # make sure we now have all the tokens cached
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), len(token_args) - 1)
@@ -148,7 +157,15 @@ class ERC20Test(EthServiceBaseTest):
         })
         self.assertEqual(resp.code, 204)
 
-        # make sure tokens are empty to start
+        # make sure tokens are empty to start (no cache)
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
+        # check that we get a push
+        await push_client.get()
+
+        # now make sure we have a token
         resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
@@ -366,6 +383,16 @@ class ERC20Test(EthServiceBaseTest):
         await self.faucet(TEST_ADDRESS, 10 * 10 ** 18)
         await self.faucet(TEST_ADDRESS_2, 10 * 10 ** 18)
 
+        # initialise cache for test addresses
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS_2))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
+
         await zrx.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
         await zrx.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS_2, 10 * 10 ** 18)
         await tok.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS_2, 10 * 10 ** 18)
@@ -472,6 +499,16 @@ class ERC20Test(EthServiceBaseTest):
 
         await self.faucet(TEST_ADDRESS, 10 * 10 ** 18)
         await self.faucet(TEST_ADDRESS_2, 10 * 10 ** 18)
+
+        # initialise cache for test addresses
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS_2))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
 
         await zrx.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
         await zrx.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS_2, 10 * 10 ** 18)
@@ -615,6 +652,16 @@ class ERC20Test(EthServiceBaseTest):
 
         await self.faucet(TEST_ADDRESS, 10 * 10 ** 18)
         await self.faucet(TEST_ADDRESS_2, 10 * 10 ** 18)
+
+        # initialise cache for test addresses
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
+        resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS_2))
+        self.assertResponseCodeEqual(resp, 200)
+        body = json_decode(resp.body)
+        self.assertEqual(len(body['tokens']), 0)
 
         await zrx.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, 10 * 10 ** 18)
         await zrx.transfer.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS_2, 10 * 10 ** 18)

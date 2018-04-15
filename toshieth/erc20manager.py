@@ -1,12 +1,14 @@
 import asyncio
 import logging
 
+from tornado.escape import json_encode
+
 from toshi.log import configure_logger, log_unhandled_exceptions
 from toshi.utils import parse_int
 
 from toshi.ethereum.mixin import EthereumMixin
 
-from toshieth.tasks import BaseEthServiceWorker, BaseTaskHandler
+from toshieth.tasks import BaseEthServiceWorker, BaseTaskHandler, manager_dispatcher
 
 log = logging.getLogger("toshieth.erc20manager")
 
@@ -18,46 +20,68 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
         if len(eth_addresses) == 0:
             return
 
+        is_wildcard = contract_address == "*"
+
         async with self.db:
-            if contract_address == "*":
+            if is_wildcard:
                 tokens = await self.db.fetch("SELECT contract_address FROM tokens")
             else:
                 tokens = [{'contract_address': contract_address}]
 
-        futures = []
-        for token in tokens:
-            for address in eth_addresses:
-                # data for `balanceOf(address)`
-                data = "0x70a08231000000000000000000000000" + address[2:]
-                f = asyncio.ensure_future(self.eth.eth_call(to_address=token['contract_address'], data=data))
-                futures.append((token['contract_address'], address, f))
+        for address in eth_addresses:
+            if is_wildcard:
+                # NOTE: we don't remove this at the end on purpose
+                # to avoid spamming of "*" refreshes
+                should_run = await self.redis.set("bulk_token_update:{}".format(address), 1,
+                                                  expire=60, exist=self.redis.SET_IF_NOT_EXIST)
+                if not should_run:
+                    continue
+            for token in tokens:
+                await self._update_token_cache(token['contract_address'], address, is_wildcard)
 
-        # wait for all the jsonrpc calls to finish
-        await asyncio.gather(*[f[2] for f in futures], return_exceptions=True)
-        bulk_update = []
-        bulk_delete = []
-        for contract_address, eth_address, f in futures:
-            try:
-                value = f.result()
-                # value of "0x" means something failed with the contract call
-                if value == "0x0000000000000000000000000000000000000000000000000000000000000000" or value == "0x":
-                    if value == "0x":
-                        log.warning("calling balanceOf for contract {} failed".format(contract_address))
-                    bulk_delete.append((contract_address, eth_address))
+    async def _update_token_cache(self, contract_address, eth_address, should_send_update):
+        try:
+            data = "0x70a08231000000000000000000000000" + eth_address[2:]
+            value = await self.eth.eth_call(to_address=contract_address, data=data)
+            # value of "0x" means something failed with the contract call
+            if value == "0x0000000000000000000000000000000000000000000000000000000000000000" or value == "0x":
+                if value == "0x":
+                    log.warning("calling balanceOf for contract {} failed".format(contract_address))
+                value = 0
+            else:
+                value = parse_int(value)  # remove hex padding of value
+            async with self.db:
+                if value > 0:
+                    await self.db.execute(
+                        "INSERT INTO token_balances (contract_address, eth_address, value) "
+                        "VALUES ($1, $2, $3) "
+                        "ON CONFLICT (contract_address, eth_address) "
+                        "DO UPDATE set value = EXCLUDED.value",
+                        contract_address, eth_address, hex(value))
+                    send_update = True
                 else:
-                    value = hex(parse_int(value))  # remove hex padding of value
-                    bulk_update.append((contract_address, eth_address, value))
-            except:
-                log.exception("WARNING: failed to update token cache of '{}' for address: {}".format(contract_address, eth_address))
-                continue
-        async with self.db:
-            await self.db.executemany("INSERT INTO token_balances (contract_address, eth_address, value) VALUES ($1, $2, $3) "
-                                      "ON CONFLICT (contract_address, eth_address) DO UPDATE set value = EXCLUDED.value",
-                                      bulk_update)
-            await self.db.executemany("DELETE FROM token_balances WHERE contract_address = $1 AND eth_address = $2",
-                                      bulk_delete)
-            await self.db.commit()
+                    rval = await self.db.execute(
+                        "DELETE FROM token_balances WHERE contract_address = $1 AND eth_address = $2",
+                        contract_address, eth_address)
+                    if rval == "DELETE 1":
+                        send_update = True
+                    else:
+                        send_update = False
+                await self.db.commit()
 
+            if should_send_update and send_update:
+                data = {
+                    "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "fromAddress": "0x0000000000000000000000000000000000000000",
+                    "toAddress": eth_address,
+                    "status": "confirmed",
+                    "value": hex(value),
+                    "contractAddress": contract_address
+                }
+                message = "SOFA::TokenPayment: " + json_encode(data)
+                manager_dispatcher.send_notification(eth_address, message)
+        except:
+            log.exception("WARNING: failed to update token cache of '{}' for address: {}".format(contract_address, eth_address))
 
 class TaskManager(BaseEthServiceWorker):
 

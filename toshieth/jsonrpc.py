@@ -482,30 +482,16 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
             raise JsonRPCInvalidParamsError(data={'id': 'invalid_token_address', 'message': 'Invalid Token Address'})
 
         # get token balances
-        while True:
-            async with self.db:
-                result = await self.db.execute("UPDATE token_registrations SET last_queried = (now() AT TIME ZONE 'utc') WHERE eth_address = $1", eth_address)
-                await self.db.commit()
-            registered = result == "UPDATE 1"
+        async with self.db:
+            result = await self.db.execute("UPDATE token_registrations SET last_queried = (now() AT TIME ZONE 'utc') WHERE eth_address = $1", eth_address)
+            await self.db.commit()
+        registered = result == "UPDATE 1"
 
-            if not registered:
-                try:
-                    async with RedisLock("token_balance_update:{}".format(eth_address)):
-                        try:
-                            await erc20_dispatcher.update_token_cache("*", eth_address)
-                        except:
-                            log.exception("Error updating token cache")
-                            raise
-                        async with self.db:
-                            await self.db.execute("INSERT INTO token_registrations (eth_address) VALUES ($1)", eth_address)
-                            await self.db.commit()
-                    break
-                except RedisLockException:
-                    # wait until the previous task is done and try again
-                    await asyncio.sleep(0.1)
-                    continue
-            else:
-                break
+        if not registered:
+            erc20_dispatcher.update_token_cache("*", eth_address)
+            async with self.db:
+                await self.db.execute("INSERT INTO token_registrations (eth_address) VALUES ($1) ON CONFLICT (eth_address) DO NOTHING", eth_address)
+                await self.db.commit()
 
         if token_address:
             async with self.db:
