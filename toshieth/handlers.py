@@ -82,8 +82,11 @@ class TokenHandler(DatabaseMixin, EthereumMixin, BaseHandler):
         self.set_header("Access-Control-Allow-Headers", "x-requested-with")
         self.set_header('Access-Control-Allow-Methods', 'GET')
 
+        force_update = self.get_argument('force_update', None)
+
         try:
-            result = await ToshiEthJsonRPC(None, self.application, self.request).get_token_balances(eth_address, token_address=token_address)
+            result = await ToshiEthJsonRPC(None, self.application, self.request).get_token_balances(
+                eth_address, token_address=token_address, force_update=force_update)
         except JsonRPCError as e:
             raise JSONHTTPError(400, body={'errors': [e.data]})
 

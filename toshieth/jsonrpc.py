@@ -475,7 +475,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         log.info("Setting tx '{}' to error due to user cancelation".format(tx['hash']))
         manager_dispatcher.update_transaction(tx['transaction_id'], 'error')
 
-    async def get_token_balances(self, eth_address, token_address=None):
+    async def get_token_balances(self, eth_address, token_address=None, force_update=None):
         if not validate_address(eth_address):
             raise JsonRPCInvalidParamsError(data={'id': 'invalid_address', 'message': 'Invalid Address'})
         if token_address is not None and not validate_address(token_address):
@@ -487,7 +487,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
             await self.db.commit()
         registered = result == "UPDATE 1"
 
-        if not registered:
+        if not registered or force_update:
             erc20_dispatcher.update_token_cache("*", eth_address)
             async with self.db:
                 await self.db.execute("INSERT INTO token_registrations (eth_address) VALUES ($1) ON CONFLICT (eth_address) DO NOTHING", eth_address)
