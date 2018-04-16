@@ -1,12 +1,15 @@
 import asyncio
 import logging
 
+from tornado.httpclient import AsyncHTTPClient
 from tornado.escape import json_encode
 
 from toshi.log import configure_logger, log_unhandled_exceptions
 from toshi.utils import parse_int
+from toshi.config import config
 
 from toshi.ethereum.mixin import EthereumMixin
+from toshi.jsonrpc.client import JsonRPCClient
 
 from toshieth.tasks import BaseEthServiceWorker, BaseTaskHandler, manager_dispatcher, erc20_dispatcher
 
@@ -38,15 +41,19 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
                 if not should_run:
                     log.info("ABORT update_token_cache(\"*\", {}): {}".format(address, should_run))
                     continue
+                client = JsonRPCClient(config['ethereum']['url'])
+                client._httpclient = AsyncHTTPClient(force_instance=True)
+            else:
+                client = self.eth
             for token in tokens:
-                await self._update_token_cache(token['contract_address'], address, is_wildcard)
+                await self._update_token_cache(token['contract_address'], address, is_wildcard, client)
             if is_wildcard:
                 log.info("DONE update_token_cache(\"*\", {})".format(address))
 
-    async def _update_token_cache(self, contract_address, eth_address, should_send_update):
+    async def _update_token_cache(self, contract_address, eth_address, should_send_update, client):
         try:
             data = "0x70a08231000000000000000000000000" + eth_address[2:]
-            value = await self.eth.eth_call(to_address=contract_address, data=data)
+            value = await client.eth_call(to_address=contract_address, data=data)
             # value of "0x" means something failed with the contract call
             if value == "0x0000000000000000000000000000000000000000000000000000000000000000" or value == "0x":
                 if value == "0x":
