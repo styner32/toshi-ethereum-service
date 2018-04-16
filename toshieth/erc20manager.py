@@ -38,18 +38,12 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
                 if not should_run:
                     log.info("ABORT update_token_cache(\"*\", {}): {}".format(address, should_run))
                     continue
-            futures = []
             for token in tokens:
-                f = erc20_dispatcher.internal_update_token_cache(token['contract_address'], address, is_wildcard)
-                futures.append(f)
-                if len(futures) >= 10:
-                    await asyncio.gather(*futures)
-                    futures = []
-            await asyncio.gather(*futures)
+                await self._update_token_cache(token['contract_address'], address, is_wildcard)
             if is_wildcard:
                 log.info("DONE update_token_cache(\"*\", {})".format(address))
 
-    async def internal_update_token_cache(self, contract_address, eth_address, should_send_update):
+    async def _update_token_cache(self, contract_address, eth_address, should_send_update):
         try:
             data = "0x70a08231000000000000000000000000" + eth_address[2:]
             value = await self.eth.eth_call(to_address=contract_address, data=data)
