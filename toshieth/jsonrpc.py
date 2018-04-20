@@ -34,6 +34,25 @@ class JsonRPCInsufficientFundsError(JsonRPCError):
                          'id' not in request if request else False)
 
 
+COLLECTIBLE_UNION_QUERY = """
+SELECT t.contract_address AS contract_address, COUNT(t.token_id) AS value, c.name, c.icon, c.url
+FROM collectible_tokens t
+JOIN collectibles c ON c.contract_address = t.contract_address
+WHERE t.owner_address = $1 AND c.ready = true
+GROUP BY t.contract_address, c.name, c.icon, c.url
+
+UNION
+
+SELECT c.contract_address AS contract_address, COUNT(b.contract_address) AS value, c.name, c.icon, c.url
+FROM fungible_collectible_balances b
+JOIN fungible_collectibles fc ON fc.contract_address = b.contract_address
+JOIN collectibles c ON fc.collectible_address = c.contract_address
+WHERE b.owner_address = $1 AND b.balance != '0x0' AND fc.ready = true
+GROUP BY c.contract_address, c.name, c.icon, c.url
+
+ORDER BY contract_address
+"""
+
 class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, AnalyticsMixin, RedisMixin):
 
     def __init__(self, user_toshi_id, application, request):
@@ -558,13 +577,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
 
         if contract_address is None:
             async with self.db:
-                collectibles = await self.db.fetch(
-                    "SELECT t.contract_address, COUNT(t.token_id) AS value, c.name, c.icon, c.url "
-                    "FROM collectible_tokens t "
-                    "JOIN collectibles c ON c.contract_address = t.contract_address "
-                    "WHERE t.owner_address = $1 AND c.ready = true "
-                    "GROUP BY t.contract_address, c.name, c.icon, c.url",
-                    address)
+                collectibles = await self.db.fetch(COLLECTIBLE_UNION_QUERY, address)
 
             return {"collectibles": [{
                 "contract_address": c['contract_address'],
@@ -578,10 +591,27 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                 collectible = await self.db.fetchrow(
                     "SELECT * FROM collectibles WHERE contract_address = $1 AND ready = true",
                     contract_address)
-                tokens = await self.db.fetch(
-                    "SELECT * FROM collectible_tokens "
-                    "WHERE contract_address = $1 AND owner_address = $2",
-                    contract_address, address)
+                if collectible is None:
+                    return None
+                if collectible['type'] == 2:
+                    token_results = await self.db.fetch(
+                        "SELECT c.contract_address AS token_id, c.name, c.image, c.creator_address, b.balance "
+                        "FROM fungible_collectible_balances b "
+                        "JOIN fungible_collectibles c ON b.contract_address = c.contract_address "
+                        "WHERE c.collectible_address = $1 AND b.balance != '0x0' AND owner_address = $2",
+                        contract_address, address)
+                    tokens = []
+                    for t in token_results:
+                        token = dict(t)
+                        token['description'] = "Created by: {}, balance: {}".format(token.pop('creator_address'), parse_int(token.pop('balance')))
+                        token['misc'] = None
+                        tokens.append(token)
+                else:
+                    tokens = await self.db.fetch(
+                        "SELECT token_id, name, image, description, misc FROM collectible_tokens "
+                        "WHERE contract_address = $1 AND owner_address = $2",
+                        contract_address, address)
+                    tokens = [dict(t) for t in tokens]
 
             if collectible is None:
                 return None
@@ -591,5 +621,5 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                 "icon": collectible["icon"],
                 "url": collectible["url"],
                 "value": hex(len(tokens)),
-                "tokens": [dict(t) for t in tokens]
+                "tokens": tokens
             }

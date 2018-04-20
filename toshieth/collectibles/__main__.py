@@ -7,6 +7,7 @@ if __name__ == "__main__":
 
     from toshieth.collectibles import punks
     from toshieth.collectibles import erc721
+    from toshieth.collectibles import fungible
     from toshieth.collectibles import worker
 
     extra_service_config()
@@ -17,10 +18,12 @@ if __name__ == "__main__":
 
     m1 = erc721.ERC721TaskManager()
     m2 = punks.CryptoPunksTaskManager()
+    m3 = fungible.FungibleCollectibleTaskManager()
 
     w = worker.CollectiblesWorker()
     w.add_instance(m1)
     w.add_instance(m2)
+    w.add_instance(m3)
 
     # this is to catch errors in the worker, otherwise the
     # logs get swallowed

@@ -6,6 +6,7 @@ import toshieth.push_service
 import toshieth.erc20manager
 import toshieth.collectibles.erc721
 import toshieth.collectibles.worker
+import toshieth.collectibles.fungible
 
 from toshi.config import config
 from toshi.test.base import AsyncHandlerTest
@@ -278,8 +279,10 @@ def requires_collectible_monitor(func=None, pass_collectible_monitor=False):
                 config['collectibles'] = {'image_format': ''}
 
             monitor = toshieth.collectibles.erc721.ERC721TaskManager()
+            fung = toshieth.collectibles.fungible.FungibleCollectibleTaskManager()
             w = toshieth.collectibles.worker.CollectiblesWorker()
             w.add_instance(monitor)
+            w.add_instance(fung)
             w.work()
 
             if pass_collectible_monitor:

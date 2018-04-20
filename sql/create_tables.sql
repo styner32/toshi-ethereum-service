@@ -97,7 +97,12 @@ CREATE TABLE IF NOT EXISTS collectibles (
     name VARCHAR,
     icon VARCHAR,
     url VARCHAR,
-    type INTEGER DEFAULT 721,
+    image_url_format_string VARCHAR,
+    type INTEGER DEFAULT 721,  -- valid types:
+                               -- 721: follows erc721 spec perfectly
+                               -- 1: erc721 but requiring some special treatment
+                               -- 2: fungible collectible
+                               -- 0: very special collectible
     last_block INTEGER DEFAULT 0,
     -- whether or not the collectible has been initialised and is ready to be shown to users
     ready BOOLEAN DEFAULT FALSE
@@ -125,6 +130,25 @@ CREATE TABLE IF NOT EXISTS collectible_tokens (
     misc VARCHAR,
 
     PRIMARY KEY(contract_address, token_id)
+);
+
+CREATE TABLE IF NOT EXISTS fungible_collectibles (
+    contract_address VARCHAR PRIMARY KEY,
+    collectible_address VARCHAR,
+    name VARCHAR,
+    token_uri VARCHAR,
+    creator_address VARCHAR,
+    image VARCHAR,
+    last_block INTEGER DEFAULT 0,
+    ready BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS fungible_collectible_balances (
+    contract_address VARCHAR,
+    owner_address VARCHAR,
+    balance VARCHAR,
+
+    PRIMARY KEY (contract_address, owner_address)
 );
 
 CREATE TABLE IF NOT EXISTS from_address_gas_price_whitelist (
@@ -155,4 +179,4 @@ CREATE INDEX IF NOT EXISTS idx_token_registrations_last_queried ON token_registr
 
 CREATE INDEX IF NOT EXISTS idx_collectible_transfer_events_collectible_address ON collectible_transfer_events (collectible_address);
 
-UPDATE database_version SET version_number = 16;
+UPDATE database_version SET version_number = 17;

@@ -1,0 +1,261 @@
+import asyncio
+import logging
+from toshi.log import configure_logger, log_unhandled_exceptions
+from toshi.ethereum.utils import data_decoder
+from ethereum.utils import sha3
+from ethereum.abi import decode_abi, process_type, decode_single
+from toshi.utils import parse_int
+from toshieth.collectibles.base import CollectiblesTaskManager
+
+log = logging.getLogger("toshieth.rareart")
+
+ASSET_CREATED_TOPIC = "0xa34547120a941eab43859acf535a121237e5536fd476dccda8174fb1af6926ed"
+ASSET_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+TOKEN_URI_CALL_DATA = "0x" + sha3("tokenURI()")[:4].hex() + "0" * 56
+NAME_CALL_DATA = "0x" + sha3("name()")[:4].hex() + "0" * 56
+CREATOR_CALL_DATA = "0x" + sha3("creator()")[:4].hex() + "0" * 56
+TOTAL_SUPPLY_CALL_DATA = "0x" + sha3("totalSupply()")[:4].hex() + "0" * 56
+
+class FungibleCollectibleTaskManager(CollectiblesTaskManager):
+
+    def __init__(self):
+        super().__init__()
+        configure_logger(log)
+        self._processing = {}
+
+    async def process_block(self, blocknumber=None):
+
+        async with self.pool.acquire() as con:
+            latest_block_number = await con.fetchval(
+                "SELECT blocknumber FROM last_blocknumber")
+            if latest_block_number is None:
+                log.warning("no blocks processed by block monitor yet")
+                self._processing = False
+                return
+
+            collectibles = await con.fetch("SELECT * FROM collectibles WHERE type = 2")
+            fungible_collectibles = await con.fetch("SELECT * FROM fungible_collectibles")
+
+        for collectible in collectibles:
+            asyncio.get_event_loop().create_task(self.process_block_for_asset_creation_contract(collectible['contract_address']))
+        # TODO: move this to a different process as it will not scale this way once the number of fungible collectibles grows a lot
+        for collectible in fungible_collectibles:
+            asyncio.get_event_loop().create_task(self.process_block_for_asset_contract(collectible['contract_address']))
+
+    @log_unhandled_exceptions(logger=log)
+    async def process_block_for_asset_creation_contract(self, collectible_address):
+
+        if collectible_address in self._processing and not self._processing[collectible_address].done():
+            log.warning("Already processing {}".format(collectible_address))
+            return
+
+        self._processing[collectible_address] = asyncio.Task.current_task()
+
+        async with self.pool.acquire() as con:
+            latest_block_number = await con.fetchval(
+                "SELECT blocknumber FROM last_blocknumber")
+            collectible = await con.fetchrow("SELECT * FROM collectibles WHERE contract_address = $1",
+                                             collectible_address)
+
+        from_block_number = collectible['last_block'] + 1
+
+        if latest_block_number < from_block_number:
+            del self._processing[collectible_address]
+            return
+
+        to_block_number = min(from_block_number + 1000, latest_block_number)
+
+        topics = [[ASSET_CREATED_TOPIC]]
+
+        log.debug("Getting logs for {} from blocks {}->{}".format(collectible_address, from_block_number, to_block_number))
+        while True:
+            try:
+                logs = await self.eth.eth_getLogs(
+                    fromBlock=from_block_number, toBlock=to_block_number,
+                    topics=topics,
+                    address=collectible['contract_address'])
+                break
+            except:
+                log.execption("error getting logs")
+                continue
+
+        if len(logs):
+
+            log.debug("Found {} logs for {} in blocks {}->{}".format(len(logs), collectible_address, from_block_number, to_block_number))
+
+            for i, _log in enumerate(logs):
+                log_block_number = int(_log['blockNumber'], 16)
+                assert log_block_number >= from_block_number and log_block_number <= to_block_number
+
+                topic = _log['topics'][0]
+
+                if topic == ASSET_CREATED_TOPIC:
+                    asset_contract_address = decode_single(
+                        process_type('address'), data_decoder(_log['topics'][1]))
+
+                    token_uri_data = await self.eth.eth_call(to_address=asset_contract_address, data=TOKEN_URI_CALL_DATA)
+                    asset_token_uri = decode_abi(['string'], data_decoder(token_uri_data))
+                    try:
+                        asset_token_uri = asset_token_uri[0].decode('utf-8', errors='replace')
+                    except:
+                        log.exception("Invalid tokenURI for fungible collectible asset {}".format(asset_contract_address))
+                        continue
+                    name_data = await self.eth.eth_call(to_address=asset_contract_address, data=NAME_CALL_DATA)
+                    asset_name = decode_abi(['string'], data_decoder(name_data))
+                    try:
+                        asset_name = asset_name[0].decode('utf-8', errors='replace')
+                    except:
+                        log.exception("Invalid name for fungible collectible asset {}".format(asset_contract_address))
+                        continue
+                    creator_data = await self.eth.eth_call(to_address=asset_contract_address, data=CREATOR_CALL_DATA)
+                    asset_creator = decode_abi(['address'], data_decoder(creator_data))[0]
+                    total_supply_data = await self.eth.eth_call(to_address=asset_contract_address, data=TOTAL_SUPPLY_CALL_DATA)
+                    total_supply = decode_abi(['uint256'], data_decoder(total_supply_data))[0]
+
+                    # owner is currently always the address that triggered the AssetCreate event
+                    tx = await self.eth.eth_getTransactionByHash(_log['transactionHash'])
+                    asset_owner = tx['from']
+
+                if collectible['image_url_format_string'] is not None:
+                    image_url = collectible['image_url_format_string'].format(
+                        contract_address=asset_contract_address,
+                        collectible_address=collectible_address,
+                        name=asset_name,
+                        token_uri=asset_token_uri,
+                        creator_address=asset_creator)
+                else:
+                    image_url = None
+
+                async with self.pool.acquire() as con:
+                    await con.execute(
+                        "INSERT INTO fungible_collectibles (contract_address, collectible_address, name, token_uri, creator_address, last_block, image) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                        "ON CONFLICT (contract_address) DO NOTHING",
+                        asset_contract_address, collectible_address, asset_name, asset_token_uri, asset_creator, log_block_number, image_url)
+                    await con.execute(
+                        "INSERT INTO fungible_collectible_balances (contract_address, owner_address, balance) "
+                        "VALUES ($1, $2, $3)",
+                        asset_contract_address, asset_owner, hex(total_supply))
+                asyncio.get_event_loop().create_task(self.process_block_for_asset_contract(asset_contract_address))
+
+        else:
+            log.debug("No logs found for {} in blocks {}->{}".format(collectible_address, from_block_number, to_block_number))
+
+        ready = collectible['ready'] or to_block_number == latest_block_number
+
+        async with self.pool.acquire() as con:
+            await con.execute("UPDATE collectibles SET last_block = $1, ready = $2 WHERE contract_address = $3",
+                              to_block_number, ready, collectible_address)
+
+        del self._processing[collectible_address]
+        if to_block_number < latest_block_number:
+            asyncio.get_event_loop().create_task(self.process_block_for_asset_creation_contract(collectible_address))
+
+    async def process_block_for_asset_contract(self, contract_address):
+
+        if contract_address in self._processing:
+            log.warning("Already processing {}".format(contract_address))
+            return
+
+        self._processing[contract_address] = True
+
+        async with self.pool.acquire() as con:
+            latest_block_number = await con.fetchval(
+                "SELECT blocknumber FROM last_blocknumber")
+            collectible = await con.fetchrow("SELECT * FROM fungible_collectibles WHERE contract_address = $1",
+                                             contract_address)
+
+        from_block_number = collectible['last_block'] + 1
+
+        if latest_block_number < from_block_number:
+            del self._processing[contract_address]
+            return
+
+        to_block_number = min(from_block_number + 1000, latest_block_number)
+
+        topics = [[ASSET_TRANSFER_TOPIC]]
+
+        updates = {}
+
+        while True:
+            try:
+                logs = await self.eth.eth_getLogs(
+                    fromBlock=from_block_number, toBlock=to_block_number,
+                    topics=topics,
+                    address=contract_address)
+                break
+            except:
+                continue
+
+        if len(logs):
+
+            for i, _log in enumerate(logs):
+                log_block_number = int(_log['blockNumber'], 16)
+                assert log_block_number >= from_block_number and log_block_number <= to_block_number
+
+                topic = _log['topics'][0]
+
+                if topic == ASSET_TRANSFER_TOPIC:
+                    indexed_data = _log['topics'][1:]
+                    data_types = ['uint256']
+                    try:
+                        data = decode_abi(data_types, data_decoder(_log['data']))
+                    except:
+                        log.exception("Error decoding log data: {} {}".format(data_types, _log['data']))
+                        return
+                    arguments = []
+                    try:
+                        for t, i in [('address', True), ('address', True), ('uint256', False)]:
+                            if i is True:
+                                arguments.append(decode_single(process_type(t), data_decoder(indexed_data.pop(0))))
+                            else:
+                                arguments.append(data.pop(0))
+                    except:
+                        log.exception("Error compiling event data")
+                        log.info("LOG: {}".format(_log))
+                        del self._processing[contract_address]
+                        return
+
+                    from_address = arguments[0]
+                    to_address = arguments[1]
+                    value = parse_int(arguments[2])
+
+                    async with self.pool.acquire() as con:
+                        if from_address and from_address not in updates:
+                            balance = await con.fetchval(
+                                "SELECT balance FROM fungible_collectible_balances WHERE contract_address = $1 AND owner_address = $2",
+                                contract_address, from_address)
+                            updates[from_address] = parse_int(balance) if balance is not None else 0
+
+                        if to_address not in updates:
+                            balance = await con.fetchval(
+                                "SELECT balance FROM fungible_collectible_balances WHERE contract_address = $1 AND owner_address = $2",
+                                contract_address, to_address)
+                            updates[to_address] = parse_int(balance) if balance is not None else 0
+
+                    updates[from_address] -= value
+                    updates[to_address] += value
+
+            if len(updates) > 0:
+                async with self.pool.acquire() as con:
+                    await con.executemany(
+                        "INSERT INTO fungible_collectible_balances (contract_address, owner_address, balance) "
+                        "VALUES ($1, $2, $3) "
+                        "ON CONFLICT (contract_address, owner_address) DO UPDATE "
+                        "SET balance = EXCLUDED.balance",
+                        [(contract_address, address, hex(value)) for address, value in updates.items()])
+
+        ready = collectible['ready'] or to_block_number == latest_block_number
+
+        async with self.pool.acquire() as con:
+            await con.execute("UPDATE fungible_collectibles SET last_block = $1, ready = $2 WHERE contract_address = $3",
+                              to_block_number, ready, contract_address)
+
+        del self._processing[contract_address]
+        if to_block_number < latest_block_number:
+            asyncio.get_event_loop().create_task(self.process_block_for_asset_contract(contract_address))
+
+
+if __name__ == "__main__":
+    app = FungibleCollectibleTaskManager()
+    app.run()
