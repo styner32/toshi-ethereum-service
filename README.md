@@ -88,9 +88,11 @@ are provided.
 heroku ps:scale web:1
 ```
 
-## Running tests
+## Tests
 
-Install external software dependencies
+### Install external software dependencies
+
+#### Mac OS X
 
 ```
 brew install postgresql
@@ -98,7 +100,6 @@ brew install redis
 brew tap ethcore/ethcore
 brew install parity --stable
 ```
-
 Ethminer needs to be installed manually
 
 ```
@@ -115,7 +116,55 @@ cd build
 cmake ..
 cmake --build . --target ethminer
 export PATH="$(pwd)/ethminer:$PATH"
+ethminer -D 0
 ```
+
+#### Ubuntu
+
+```
+sudo apt-get install postgresql
+sudo apt-get install redis-server
+```
+
+Parity
+
+download latest stable release from https://github.com/paritytech/parity/releases and run `sudo dpkg -i parity_*.deb`
+
+Ethminer
+
+```
+git clone https://github.com/ethereum/cpp-ethereum.git
+cd cpp-ethereum/
+git checkout 38ac899bf30b87ec76f0e940674046bed952b229
+git submodule update --init
+./scripts/install_deps.sh
+cmake -H. -Bbuild
+cd build/ethminer
+make
+sudo cp ethminer /usr/local/bin/
+ethminer -D 0
+```
+
+If you get errors like `-Werror=implicit-fallthrough=` and `-Werror=maybe-uninitialized` you have a newer version of gcc than expected and need to patch `cmake/EthCompilerSettings.cmake` with the following and restart from the `cmake -H. -Bbuild` step.
+
+```
+diff --git a/cmake/EthCompilerSettings.cmake b/cmake/EthCompilerSettings.cmake
+index d6c0347bc..c4e2dd50c 100644
+--- a/cmake/EthCompilerSettings.cmake
++++ b/cmake/EthCompilerSettings.cmake
+@@ -34,6 +34,9 @@ if (("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" MA
+
+        # Disable warnings about unknown pragmas (which is enabled by -Wall).
+        add_compile_options(-Wno-unknown-pragmas)
++       add_compile_options(-Wno-implicit-fallthrough)
++       add_compile_options(-Wno-maybe-uninitialized)
++       add_compile_options(-Wno-deprecated)
+
+        # Configuration-specific compiler settings.
+        set(CMAKE_CXX_FLAGS_DEBUG          "-Og -g -DETH_DEBUG")
+```
+
+### Running tests
 
 A convinience script exists to run all tests:
 ```
@@ -127,33 +176,3 @@ To run a single test, use:
 ```
 env/bin/python -m tornado.testing toshieth.test.<test-package>
 ```
-
-# Structure
-
-- Push notification sender
-- websocket handler
-- transaction queue manager
-
-### manager.py
-
-Transaction queue manager
-
-- managing the tx queue
-- updating tx state
-- triggering state change notifications
-
-### push_service.py
-
-- sending push notifications
-
-### monitor.py
-
-Ethereum Node monitor
-
-- monitoring new blocks
-- monitoring new pending transactions
-- monitoring newly confirmed transaction
-
-### websocket.py : SubscriptionManager
-
-- sending notifications to websocket clients
