@@ -23,6 +23,8 @@ DEFAULT_POLL_DELAY = 1
 FILTER_TIMEOUT = 120
 SANITY_CHECK_CALLBACK_TIME = 10
 
+UNCONFIRMED_TRANSACTIONS_REDIS_KEY = "toshieth.monitor:unconfirmed_txs"
+
 log = logging.getLogger("toshieth.monitor")
 
 JSONRPC_ERRORS = (tornado.httpclient.HTTPError,
@@ -52,12 +54,16 @@ class BlockMonitor:
         self._sanity_check_process = None
         self._process_unconfirmed_transactions_process = None
 
+        self._new_pending_transaction_filter_id = None
+        self._new_block_filter_id = None
+        self._shutdown = False
+
         self._lastlog = 0
 
     def start(self):
         if not hasattr(self, '_startup_future'):
-            self._startup_future = asyncio.Future()
-            asyncio.get_event_loop().call_soon(lambda: asyncio.get_event_loop().create_task(self._initialise()))
+            self._startup_future = asyncio.get_event_loop().create_future()
+            asyncio.get_event_loop().create_task(self._initialise())
             self._sanity_check_schedule = asyncio.get_event_loop().call_later(SANITY_CHECK_CALLBACK_TIME, self.run_sanity_check)
         return self._startup_future
 
@@ -81,12 +87,6 @@ class BlockMonitor:
 
         self.last_block_number = last_block_number
         self._shutdown = False
-
-        # list of callbacks for transaction notifications
-        # form is {token_id: [method, ...], ...}
-        self.callbacks = {}
-
-        self.unmatched_transactions = {}
 
         await self.register_filters()
 
@@ -145,7 +145,7 @@ class BlockMonitor:
     def run_filter_poll(self):
         if self._shutdown:
             return
-        if self._filter_poll_process is not None:
+        if self._filter_poll_process is not None and not self._filter_poll_process.done():
             log.debug("filter polling is already running")
             return
         self._filter_poll_process = asyncio.get_event_loop().create_task(self.filter_poll())
@@ -153,7 +153,7 @@ class BlockMonitor:
     def run_block_check(self):
         if self._shutdown:
             return
-        if self._block_checking_process is not None:
+        if self._block_checking_process is not None and not self._block_checking_process.done():
             log.debug("Block check is already running")
             return
 
@@ -162,7 +162,7 @@ class BlockMonitor:
     def run_process_unconfirmed_transactions(self):
         if self._shutdown:
             return
-        if self._process_unconfirmed_transactions_process is not None:
+        if self._process_unconfirmed_transactions_process is not None and not self._process_unconfirmed_transactions_process.done():
             log.debug("Process unconfirmed transactions is already running")
             return
 
@@ -171,15 +171,23 @@ class BlockMonitor:
     @log_unhandled_exceptions(logger=log)
     async def block_check(self):
         while not self._shutdown:
-            block = await self.eth.eth_getBlockByNumber(self.last_block_number + 1)
+            try:
+                block = await self.eth.eth_getBlockByNumber(self.last_block_number + 1)
+            except:
+                log.exception("Failed eth_getBlockByNumber call")
+                break
             if block:
                 if self._lastlog + 1800 < asyncio.get_event_loop().time():
                     self._lastlog = asyncio.get_event_loop().time()
                     log.info("Processing block {}".format(block['number']))
 
                 if block['logsBloom'] != "0x" + ("0" * 512):
-                    logs_list = await self.eth.eth_getLogs(fromBlock=block['number'],
-                                                           toBlock=block['number'])
+                    try:
+                        logs_list = await self.eth.eth_getLogs(fromBlock=block['number'],
+                                                               toBlock=block['number'])
+                    except:
+                        log.exception("failed eth_getLogs call")
+                        break
                     logs = {}
                     for _log in logs_list:
                         if _log['transactionHash'] not in logs:
@@ -265,7 +273,10 @@ class BlockMonitor:
                 try:
                     new_pending_transactions = await self.eth.eth_getFilterChanges(self._new_pending_transaction_filter_id)
                     # add any to the list of unprocessed transactions
-                    self.unmatched_transactions.update({tx_hash: 0 for tx_hash in new_pending_transactions})
+                    for tx_hash in new_pending_transactions:
+                        await self.redis.hsetnx(
+                            UNCONFIRMED_TRANSACTIONS_REDIS_KEY,
+                            tx_hash, int(asyncio.get_event_loop().time()))
                 except JSONRPC_ERRORS:
                     log.exception("WARNING: unable to connect to server")
                     new_pending_transactions = None
@@ -281,7 +292,7 @@ class BlockMonitor:
                         log.warning("Haven't seen any new pending transactions for {} seconds".format(time_since_last_pending_transaction))
                         await self.register_new_pending_transaction_filter()
 
-                if len(self.unmatched_transactions) > 0:
+                if await self.redis.hlen(UNCONFIRMED_TRANSACTIONS_REDIS_KEY) > 0:
                     self.run_process_unconfirmed_transactions()
 
         if not self._shutdown:
@@ -318,7 +329,7 @@ class BlockMonitor:
         self._filter_poll_process = None
 
         if not self._shutdown:
-            self.schedule_filter_poll(1 if self.unmatched_transactions else DEFAULT_POLL_DELAY)
+            self.schedule_filter_poll(1 if (await self.redis.hlen(UNCONFIRMED_TRANSACTIONS_REDIS_KEY) > 0) else DEFAULT_POLL_DELAY)
 
     @log_unhandled_exceptions(logger=log)
     async def process_unconfirmed_transactions(self):
@@ -327,22 +338,21 @@ class BlockMonitor:
             return
 
         # go through all the unmatched transactions that have no match
-        for tx_hash, age in list(self.unmatched_transactions.items()):
+        unmatched_transactions = await self.redis.hgetall(UNCONFIRMED_TRANSACTIONS_REDIS_KEY, encoding="utf-8")
+        for tx_hash, created in unmatched_transactions.items():
+            age = asyncio.get_event_loop().time() - int(created)
             try:
                 tx = await self.eth.eth_getTransactionByHash(tx_hash)
             except JSONRPC_ERRORS:
                 log.exception("Error getting transaction")
                 tx = None
             if tx is None:
-                # if the tx has been checked a number of times and not found, assume it was
+                # if the tx has existed for 60 seconds and not found, assume it was
                 # removed from the network before being accepted into a block
-                if age >= 10:
-                    self.unmatched_transactions.pop(tx_hash, None)
-                else:
-                    # increase the age
-                    self.unmatched_transactions[tx_hash] += 1
+                if age >= 60:
+                    await self.redis.hdel(UNCONFIRMED_TRANSACTIONS_REDIS_KEY, tx_hash)
             else:
-                self.unmatched_transactions.pop(tx_hash, None)
+                await self.redis.hdel(UNCONFIRMED_TRANSACTIONS_REDIS_KEY, tx_hash)
 
                 # check if the transaction has already been included in a block
                 # and if so, ignore this notification as it will be picked up by
@@ -561,8 +571,12 @@ class BlockMonitor:
                 log.warning("Filter poll schedule is in the past!")
                 self.schedule_filter_poll()
         self._sanity_check_schedule = asyncio.get_event_loop().call_later(SANITY_CHECK_CALLBACK_TIME, self.run_sanity_check)
-        await get_redis_connection().setex("monitor_sanity_check_ok", SANITY_CHECK_CALLBACK_TIME * 2, "OK")
+        await self.redis.setex("monitor_sanity_check_ok", SANITY_CHECK_CALLBACK_TIME * 2, "OK")
         self._sanity_check_process = None
+
+    @property
+    def redis(self):
+        return get_redis_connection()
 
     async def shutdown(self):
 
