@@ -100,7 +100,6 @@ class TransactionSkeletonTest(EthServiceBaseTest):
         })
         self.assertEqual(resp.code, 200)
         body = json_decode(resp.body)
-        print(body)
         tx_hash = await self.sign_and_send_tx(TEST_PRIVATE_KEY, body['tx'])
         await self.wait_on_tx_confirmation(tx_hash)
 
@@ -138,3 +137,22 @@ class TransactionSkeletonTest(EthServiceBaseTest):
         self.assertEqual(resp.code, 200)
         data = json_decode(resp.body)
         self.assertEqual(parse_int(data['confirmed_balance']), expected_balance)
+
+    @gen_test(timeout=30)
+    @requires_full_stack(block_monitor=True, parity=True)
+    async def test_create_and_send_transaction_with_max_value_with_insufficient_balance(self, *, monitor, parity):
+
+        contract = await Contract.from_source_code(
+            SPLITTER_CONTRACT.encode('utf-8'), "Splitter",
+            constructor_data=[[TEST_ADDRESS, TEST_ADDRESS_2, TEST_ADDRESS_3, TEST_ADDRESS_4]],
+            deployer_private_key=FAUCET_PRIVATE_KEY)
+
+        await self.faucet(TEST_ADDRESS, 9 * 10 ** 10)
+
+        resp = await self.fetch("/tx/skel", method="POST", body={
+            "from": TEST_ADDRESS,
+            "to": contract.address,
+            "value": "max"
+
+        })
+        self.assertEqual(resp.code, 400)

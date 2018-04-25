@@ -215,6 +215,9 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                                 log.warning("Hit max attempts trying to get max value to send to contract '{}'".format(to_address))
                                 raise JsonRPCInvalidParamsError(data={'id': 'invalid_to_address', 'message': 'Cannot send payments to that address'})
                             value = balance - (gas_price * gas)
+                            # make sure the balance isn't negative
+                            if value < 0:
+                                raise JsonRPCInsufficientFundsError(data={'id': 'insufficient_funds', 'message': 'Insufficient Funds'})
                             try:
                                 gas_with_value = await self.eth.eth_estimateGas(from_address, to_address, data=data, value=value)
                             except JsonRPCError:
