@@ -87,10 +87,10 @@ class ERC20Test(EthServiceBaseTest):
         body = json_decode(resp.body)
         # ensure empty after initial trigger
         self.assertEqual(len(body['tokens']), 0)
-        # expect len(token_args) - 1 PNs for token updates
-        for _ in range(len(token_args) - 1):
-            pn = await push_client.get()
-            print(pn)
+        # expect 1 PN for token updates
+        #for _ in range(len(token_args) - 1):
+        pn = await push_client.get()
+        print(pn)
         # make sure we now have all the tokens cached
         resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS))
         self.assertResponseCodeEqual(resp, 200)
