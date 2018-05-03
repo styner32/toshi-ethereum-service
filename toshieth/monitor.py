@@ -44,7 +44,7 @@ class BlockMonitor:
             log.warning("monitor using config['ethereum'] node")
             node_url = config['ethereum']['url']
 
-        self.eth = JsonRPCClient(node_url, should_retry=False)
+        self.eth = JsonRPCClient(node_url)
 
         self._check_schedule = None
         self._poll_schedule = None

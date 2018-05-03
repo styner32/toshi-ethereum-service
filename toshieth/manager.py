@@ -386,7 +386,8 @@ class TransactionQueueHandler(EthereumMixin, BalanceMixin, BaseTaskHandler):
                     else:
                         erc20_dispatcher.update_token_cache(token_tx['contract_address'],
                                                             from_address,
-                                                            to_address)
+                                                            to_address,
+                                                            blocknumber=parse_int(transaction['blockNumber']))
                 if token_tx_status == 'confirmed':
                     data = {
                         "txHash": tx['hash'],
