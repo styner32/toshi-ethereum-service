@@ -272,6 +272,11 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                                     network_id=self.network_id)
         except InvalidTransaction as e:
             raise JsonRPCInvalidParamsError(data={'id': 'invalid_transaction', 'message': str(e)})
+        except binascii.Error as e:
+            log.exception("Error creating transaction skeleton: nonce:{} gasprice:{} startgas:{} to:{} value:{} data:{} network_id:{}".format(
+                nonce, gas_price, gas, to_address, value, data, self.network_id))
+            raise JsonRPCError(None, -32000, "Error creating transaction skeleton",
+                               {'id': 'unexpected_error', 'message': "Error creating transaction skeleton"})
 
         if tx.intrinsic_gas_used > gas:
             raise JsonRPCInvalidParamsError(data={
