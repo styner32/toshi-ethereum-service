@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import os
+import tornado.web
 
 from tornado.escape import json_decode
 from tornado.testing import gen_test
@@ -23,7 +24,19 @@ TEST_ADDRESS_2 = private_key_to_address(TEST_PRIVATE_KEY_2)
 
 TEST_APN_ID = "64be4fe95ba967bb533f0c240325942b9e1f881b5cd2982568a305dd4933e0bd"
 
+class FakeIPFSHandler(tornado.web.RequestHandler):
+
+    def get(self, key):
+        self.write({"properties": {
+            "image": {"description": "http://{}.png".format(key)}
+        }})
+
 class ERC721Test(EthServiceBaseTest):
+
+    def get_urls(self):
+        return super().get_urls() + [
+            ('/v1/fake_ipfs/(.+)', FakeIPFSHandler)
+        ]
 
     async def deploy_contract(self, sourcecode, contract_name, constructor_data):
         contract = await Contract.from_source_code(sourcecode, contract_name, constructor_data=constructor_data, deployer_private_key=FAUCET_PRIVATE_KEY)
@@ -41,15 +54,23 @@ class ERC721Test(EthServiceBaseTest):
         await self.faucet(TEST_ADDRESS, 10 ** 18)
 
         # "mint" some tokens
-        txhash = await creator_contract.createAsset.set_sender(TEST_PRIVATE_KEY)("ART", 10, "dasdasdasdasdasdasdasd", TEST_ADDRESS)
+        txhash = await creator_contract.createAsset.set_sender(TEST_PRIVATE_KEY)("ART1", 10, "dasdasdasdasdasdasdasd", TEST_ADDRESS)
         receipt = await self.eth.eth_getTransactionReceipt(txhash)
         arttokenaddr = "0x" + receipt['logs'][0]['topics'][1][-40:]
 
         arttoken1 = await Contract.from_source_code(ARTTOKEN_CONTRACT, "ArtToken", address=arttokenaddr, deploy=False)
 
-        self.assertEqual(await arttoken1.name(), "ART")
+        txhash = await creator_contract.createAsset.set_sender(TEST_PRIVATE_KEY)("ART2", 10, self.get_url("/fake_ipfs/ART2"), TEST_ADDRESS)
+        receipt = await self.eth.eth_getTransactionReceipt(txhash)
+        arttokenaddr = "0x" + receipt['logs'][0]['topics'][1][-40:]
+
+        arttoken2 = await Contract.from_source_code(ARTTOKEN_CONTRACT, "ArtToken", address=arttokenaddr, deploy=False)
+
+        self.assertEqual(await arttoken1.name(), "ART1")
         self.assertEqual(await arttoken1.creator(), TEST_ADDRESS)
         self.assertEqual(await arttoken1.balanceOf(TEST_ADDRESS), 10)
+
+        self.assertEqual(await arttoken2.tokenURI(), self.get_url("/fake_ipfs/ART2"))
 
         # force block check to clear out txs pre registration
         await asyncio.sleep(0.1)
@@ -57,7 +78,7 @@ class ERC721Test(EthServiceBaseTest):
         await asyncio.sleep(0.1)
 
         async with self.pool.acquire() as con:
-            self.assertEqual(await con.fetchval("SELECT count(*) FROM fungible_collectibles"), 1)
+            self.assertEqual(await con.fetchval("SELECT count(*) FROM fungible_collectibles"), 2)
 
         # send an art token!
         await arttoken1.transfer.set_sender(TEST_PRIVATE_KEY)(TEST_ADDRESS_2, 1)
@@ -68,11 +89,11 @@ class ERC721Test(EthServiceBaseTest):
 
         async with self.pool.acquire() as con:
             owner_balance = await con.fetchval(
-                "SELECT balance FROM fungible_collectible_balances WHERE owner_address = $1",
-                TEST_ADDRESS)
+                "SELECT balance FROM fungible_collectible_balances WHERE owner_address = $1 AND contract_address = $2",
+                TEST_ADDRESS, arttoken1.address)
             receiver_balance = await con.fetchval(
-                "SELECT balance FROM fungible_collectible_balances WHERE owner_address = $1",
-                TEST_ADDRESS_2)
+                "SELECT balance FROM fungible_collectible_balances WHERE owner_address = $1 AND contract_address = $2",
+                TEST_ADDRESS_2, arttoken1.address)
         self.assertEqual(owner_balance, hex(9))
         self.assertEqual(receiver_balance, hex(1))
 
@@ -80,10 +101,11 @@ class ERC721Test(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['collectibles']), 1)
-        self.assertEqual(body['collectibles'][0]['value'], hex(1))
+        self.assertEqual(body['collectibles'][0]['value'], hex(2))
 
         resp = await self.fetch("/collectibles/{}/{}".format(TEST_ADDRESS, creator_contract.address))
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
-        self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['image'], "https://ipfs.node/dasdasdasdasdasdasdasd")
+        self.assertEqual(len(body['tokens']), 2)
+        self.assertEqual(body['tokens'][0]['image'], "http://ART2.png")
+        self.assertEqual(body['tokens'][1]['image'], "https://ipfs.node/dasdasdasdasdasdasdasd")

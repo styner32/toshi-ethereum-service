@@ -603,7 +603,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                     return None
                 if collectible['type'] == 2:
                     token_results = await self.db.fetch(
-                        "SELECT c.contract_address AS token_id, c.name, c.image, c.creator_address, b.balance "
+                        "SELECT c.contract_address AS token_id, c.name, c.image, c.creator_address, c.description, c.token_uri, b.balance "
                         "FROM fungible_collectible_balances b "
                         "JOIN fungible_collectibles c ON b.contract_address = c.contract_address "
                         "WHERE c.collectible_address = $1 AND b.balance != '0x0' AND owner_address = $2",
@@ -611,12 +611,12 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                     tokens = []
                     for t in token_results:
                         token = dict(t)
-                        token['description'] = "Created by: {}, balance: {}".format(token.pop('creator_address'), parse_int(token.pop('balance')))
-                        token['misc'] = None
+                        if token['description'] is None:
+                            token['description'] = "Created by: {}, balance: {}".format(token.pop('creator_address'), parse_int(token.pop('balance')))
                         tokens.append(token)
                 else:
                     tokens = await self.db.fetch(
-                        "SELECT token_id, name, image, description, misc FROM collectible_tokens "
+                        "SELECT token_id, name, image, description, token_uri FROM collectible_tokens "
                         "WHERE contract_address = $1 AND owner_address = $2",
                         contract_address, address)
                     tokens = [dict(t) for t in tokens]

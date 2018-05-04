@@ -6,6 +6,9 @@ from ethereum.utils import sha3
 from ethereum.abi import decode_abi, process_type, decode_single
 from toshi.utils import parse_int
 from toshieth.collectibles.base import CollectiblesTaskManager
+from urllib.parse import urlparse
+from tornado.httpclient import AsyncHTTPClient
+from tornado.escape import json_decode
 
 log = logging.getLogger("toshieth.rareart")
 
@@ -89,49 +92,79 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
 
                 topic = _log['topics'][0]
 
-                if topic == ASSET_CREATED_TOPIC:
-                    asset_contract_address = decode_single(
-                        process_type('address'), data_decoder(_log['topics'][1]))
+                if topic != ASSET_CREATED_TOPIC:
+                    continue
 
-                    token_uri_data = await self.eth.eth_call(to_address=asset_contract_address, data=TOKEN_URI_CALL_DATA)
-                    asset_token_uri = decode_abi(['string'], data_decoder(token_uri_data))
+                asset_contract_address = decode_single(
+                    process_type('address'), data_decoder(_log['topics'][1]))
+
+                token_uri_data = await self.eth.eth_call(to_address=asset_contract_address, data=TOKEN_URI_CALL_DATA)
+                asset_token_uri = decode_abi(['string'], data_decoder(token_uri_data))
+                try:
+                    asset_token_uri = asset_token_uri[0].decode('utf-8', errors='replace')
+                except:
+                    log.exception("Invalid tokenURI for fungible collectible asset {}".format(asset_contract_address))
+                    continue
+                name_data = await self.eth.eth_call(to_address=asset_contract_address, data=NAME_CALL_DATA)
+                asset_name = decode_abi(['string'], data_decoder(name_data))
+                try:
+                    asset_name = asset_name[0].decode('utf-8', errors='replace')
+                except:
+                    log.exception("Invalid name for fungible collectible asset {}".format(asset_contract_address))
+                    continue
+                creator_data = await self.eth.eth_call(to_address=asset_contract_address, data=CREATOR_CALL_DATA)
+                asset_creator = decode_abi(['address'], data_decoder(creator_data))[0]
+                total_supply_data = await self.eth.eth_call(to_address=asset_contract_address, data=TOTAL_SUPPLY_CALL_DATA)
+                total_supply = decode_abi(['uint256'], data_decoder(total_supply_data))[0]
+
+                # owner is currently always the address that triggered the AssetCreate event
+                tx = await self.eth.eth_getTransactionByHash(_log['transactionHash'])
+                asset_owner = tx['from']
+
+                asset_image = None
+                asset_description = None
+                parsed_uri = urlparse(asset_token_uri)
+                if asset_token_uri and parsed_uri.netloc and parsed_uri.scheme in ['http', 'https']:
                     try:
-                        asset_token_uri = asset_token_uri[0].decode('utf-8', errors='replace')
+                        resp = await AsyncHTTPClient(max_clients=100).fetch(parsed_uri.geturl())
+                        metadata = json_decode(resp.body)
+                        if "properties" in metadata:
+                            metadata = metadata['properties']
+                        if 'name' in metadata:
+                            if type(metadata['name']) == dict and 'description' in metadata['name']:
+                                asset_name = metadata['name']['description']
+                            elif type(metadata['name']) == str:
+                                asset_name = metadata['name']
+                        if 'description' in metadata:
+                            if type(metadata['description']) == dict and 'description' in metadata['description']:
+                                asset_description = metadata['description']['description']
+                            elif type(metadata['description']) == str:
+                                asset_description = metadata['description']
+                        if 'image' in metadata:
+                            if type(metadata['image']) == dict and 'description' in metadata['image']:
+                                asset_image = metadata['image']['description']
+                            elif type(metadata['image']) == str:
+                                asset_image = metadata['image']
                     except:
-                        log.exception("Invalid tokenURI for fungible collectible asset {}".format(asset_contract_address))
-                        continue
-                    name_data = await self.eth.eth_call(to_address=asset_contract_address, data=NAME_CALL_DATA)
-                    asset_name = decode_abi(['string'], data_decoder(name_data))
-                    try:
-                        asset_name = asset_name[0].decode('utf-8', errors='replace')
-                    except:
-                        log.exception("Invalid name for fungible collectible asset {}".format(asset_contract_address))
-                        continue
-                    creator_data = await self.eth.eth_call(to_address=asset_contract_address, data=CREATOR_CALL_DATA)
-                    asset_creator = decode_abi(['address'], data_decoder(creator_data))[0]
-                    total_supply_data = await self.eth.eth_call(to_address=asset_contract_address, data=TOTAL_SUPPLY_CALL_DATA)
-                    total_supply = decode_abi(['uint256'], data_decoder(total_supply_data))[0]
+                        log.exception("Error getting token metadata for {}:{} from {}".format(
+                            collectible_address, asset_contract_address, asset_token_uri))
+                        pass
 
-                    # owner is currently always the address that triggered the AssetCreate event
-                    tx = await self.eth.eth_getTransactionByHash(_log['transactionHash'])
-                    asset_owner = tx['from']
-
-                if collectible['image_url_format_string'] is not None:
-                    image_url = collectible['image_url_format_string'].format(
-                        contract_address=asset_contract_address,
-                        collectible_address=collectible_address,
-                        name=asset_name,
-                        token_uri=asset_token_uri,
-                        creator_address=asset_creator)
-                else:
-                    image_url = None
+                if asset_image is None:
+                    if collectible['image_url_format_string'] is not None:
+                        asset_image = collectible['image_url_format_string'].format(
+                            contract_address=asset_contract_address,
+                            collectible_address=collectible_address,
+                            name=asset_name,
+                            token_uri=asset_token_uri,
+                            creator_address=asset_creator)
 
                 async with self.pool.acquire() as con:
                     await con.execute(
-                        "INSERT INTO fungible_collectibles (contract_address, collectible_address, name, token_uri, creator_address, last_block, image) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                        "INSERT INTO fungible_collectibles (contract_address, collectible_address, name, description, token_uri, creator_address, last_block, image) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
                         "ON CONFLICT (contract_address) DO NOTHING",
-                        asset_contract_address, collectible_address, asset_name, asset_token_uri, asset_creator, log_block_number, image_url)
+                        asset_contract_address, collectible_address, asset_name, asset_description, asset_token_uri, asset_creator, log_block_number, asset_image)
                     await con.execute(
                         "INSERT INTO fungible_collectible_balances (contract_address, owner_address, balance) "
                         "VALUES ($1, $2, $3)",

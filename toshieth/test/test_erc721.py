@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import os
+import tornado.web
 
 from tornado.escape import json_decode
 from tornado.testing import gen_test
@@ -26,7 +27,20 @@ NOT_QUITE_ERC721_MINTER_CONTRACT = open(os.path.join(os.path.dirname(__file__), 
 
 TEST_APN_ID = "64be4fe95ba967bb533f0c240325942b9e1f881b5cd2982568a305dd4933e0bd"
 
+class FakeIPFSHandler(tornado.web.RequestHandler):
+
+    def get(self, key):
+        self.write({"name": key,
+                    "description": "description of {}".format(key),
+                    # image with "description" to test correct ERC721 metadata format style
+                    "image": {"description": "http://{}.png".format(key)}})
+
 class ERC721Test(EthServiceBaseTest):
+
+    def get_urls(self):
+        return super().get_urls() + [
+            ('/v1/fake_ipfs/(.+)', FakeIPFSHandler)
+        ]
 
     async def deploy_contract(self, sourcecode, contract_name, constructor_data):
         contract = await Contract.from_source_code(sourcecode, contract_name, constructor_data=constructor_data, deployer_private_key=FAUCET_PRIVATE_KEY)
@@ -56,8 +70,12 @@ class ERC721Test(EthServiceBaseTest):
             contract = collectible['contract']
             for i in range(10):
                 token_id = int(os.urandom(16).hex(), 16)
-                await contract.mint.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, token_id, "")
+                uri = self.get_url("/fake_ipfs/{}".format(hex(token_id)))
+                await contract.mint.set_sender(FAUCET_PRIVATE_KEY)(TEST_ADDRESS, token_id, uri)
                 collectible['tokens'][hex(token_id)] = TEST_ADDRESS
+
+                test_uri = await contract.tokenURI(token_id)
+                self.assertEquals(test_uri, uri)
 
             result = await contract.balanceOf(TEST_ADDRESS)
             self.assertEquals(result, len(collectible['tokens']))
@@ -94,6 +112,9 @@ class ERC721Test(EthServiceBaseTest):
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
         self.assertEqual(body['tokens'][0]['token_id'], token_id)
+        self.assertEqual(body['tokens'][0]['name'], token_id)
+        self.assertEqual(body['tokens'][0]['description'], "description of {}".format(token_id))
+        self.assertEqual(body['tokens'][0]['image'], "http://{}.png".format(token_id))
 
         # make sure the token has been removed from the original owner
         resp = await self.fetch("/collectibles/{}/{}".format(TEST_ADDRESS, contract.address))
@@ -136,8 +157,8 @@ class ERC721Test(EthServiceBaseTest):
         self.assertEquals(result, len(tokens))
 
         await monitor.block_check()
-        # note: giving 0.2 otherwise this test randomly fails
-        await asyncio.sleep(0.2)
+        # note: giving 0.5 otherwise this test randomly fails
+        await asyncio.sleep(0.5)
 
         resp = await self.fetch("/collectibles/{}/{}".format(FAUCET_ADDRESS, contract.address))
 

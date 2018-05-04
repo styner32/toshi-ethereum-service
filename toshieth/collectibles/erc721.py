@@ -3,11 +3,17 @@ import logging
 from toshi.log import configure_logger
 from toshi.config import config
 from toshi.ethereum.utils import data_decoder
+from ethereum.utils import sha3
 from ethereum.abi import decode_abi, process_type, decode_single
 from toshi.utils import parse_int
 from toshieth.collectibles.base import CollectiblesTaskManager
+from urllib.parse import urlparse
+from tornado.httpclient import AsyncHTTPClient
+from tornado.escape import json_decode
 
 log = logging.getLogger("toshieth.erc721")
+
+TOKEN_URI_CALL_DATA = "0x" + sha3("tokenURI(uint256)")[:4].hex()
 
 class ERC721TaskManager(CollectiblesTaskManager):
 
@@ -121,16 +127,79 @@ class ERC721TaskManager(CollectiblesTaskManager):
 
                     log.debug("{} #{} -> {} -> {}".format(collectible['name'], token_id,
                                                           event['name'], to_address))
-                    token_image = config['collectibles']['image_format'].format(
-                        contract_address=collectible_address,
-                        token_id=token_id)
-                    updates[hex(token_id)] = (collectible_address, hex(token_id), to_address, token_image)
+                    updates[hex(token_id)] = (collectible_address, hex(token_id), to_address)
 
         if len(updates) > 0:
+            new_tokens = []
+            for token_id in list(updates.keys()):
+                async with self.pool.acquire() as con:
+                    token = await con.fetchrow("SELECT * FROM collectible_tokens WHERE contract_address = $1 AND token_id = $2",
+                                               collectible_address, token_id)
+                if token is None:
+                    # get token details
+                    token_uri = None
+                    token_uri_data = await self.eth.eth_call(to_address=collectible_address, data="{}{:064x}".format(
+                        TOKEN_URI_CALL_DATA, int(token_id, 16)))
+                    if token_uri_data and token_uri_data != "0x":
+                        try:
+                            token_uri = decode_abi(['string'], data_decoder(token_uri_data))[0].decode('utf-8', errors='replace')
+                        except:
+                            log.exception("Error decoding tokenURI data")
+
+                    token_image = None
+                    token_name = None
+                    token_description = None
+                    # if token_uri points to a valid url check if it points to json (for the erc721 metadata)
+                    parsed_uri = urlparse(token_uri)
+                    if token_uri and parsed_uri.netloc and parsed_uri.scheme in ['http', 'https']:
+                        try:
+                            resp = await AsyncHTTPClient(max_clients=100).fetch(parsed_uri.geturl())
+                            metadata = json_decode(resp.body)
+                            if "properties" in metadata:
+                                metadata = metadata['properties']
+                            if 'name' in metadata:
+                                if type(metadata['name']) == dict and 'description' in metadata['name']:
+                                    token_name = metadata['name']['description']
+                                elif type(metadata['name']) == str:
+                                    token_name = metadata['name']
+                            if 'description' in metadata:
+                                if type(metadata['description']) == dict and 'description' in metadata['description']:
+                                    token_description = metadata['description']['description']
+                                elif type(metadata['description']) == str:
+                                    token_description = metadata['description']
+                            if 'image' in metadata:
+                                if type(metadata['image']) == dict and 'description' in metadata['image']:
+                                    token_image = metadata['image']['description']
+                                elif type(metadata['image']) == str:
+                                    token_image = metadata['image']
+                        except:
+                            log.exception("Error getting token metadata for {}:{} from {}".format(collectible_address, token_id, token_uri))
+                            pass
+
+                    if not token_image:
+                        if collectible['image_url_format_string'] is not None:
+                            image_format_string = collectible['image_url_format_string']
+                        else:
+                            image_format_string = config['collectibles']['image_format']
+                        token_image = image_format_string.format(
+                            contract_address=collectible_address,
+                            token_id_hex=token_id,
+                            token_id_int=int(token_id, 16),
+                            token_uri=token_uri)
+
+                    new_token = updates.pop(token_id, ()) + (token_uri, token_name, token_description, token_image)
+                    new_tokens.append(new_token)
+
             async with self.pool.acquire() as con:
+                if len(new_tokens) > 0:
+                    await con.executemany(
+                        "INSERT INTO collectible_tokens (contract_address, token_id, owner_address, token_uri, name, description, image) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                        new_tokens)
+
                 await con.executemany(
-                    "INSERT INTO collectible_tokens (contract_address, token_id, owner_address, image) "
-                    "VALUES ($1, $2, $3, $4) "
+                    "INSERT INTO collectible_tokens (contract_address, token_id, owner_address) "
+                    "VALUES ($1, $2, $3) "
                     "ON CONFLICT (contract_address, token_id) DO UPDATE "
                     "SET owner_address = EXCLUDED.owner_address",
                     list(updates.values()))

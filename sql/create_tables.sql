@@ -124,10 +124,10 @@ CREATE TABLE IF NOT EXISTS collectible_tokens (
     contract_address VARCHAR,
     token_id VARCHAR,
     owner_address VARCHAR,
+    token_uri VARCHAR,
     name VARCHAR,
     image VARCHAR,
     description VARCHAR,
-    misc VARCHAR,
 
     PRIMARY KEY(contract_address, token_id)
 );
@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS fungible_collectibles (
     token_uri VARCHAR,
     creator_address VARCHAR,
     image VARCHAR,
+    description VARCHAR,
     last_block INTEGER DEFAULT 0,
     ready BOOLEAN DEFAULT FALSE
 );
@@ -179,4 +180,4 @@ CREATE INDEX IF NOT EXISTS idx_token_registrations_last_queried ON token_registr
 
 CREATE INDEX IF NOT EXISTS idx_collectible_transfer_events_collectible_address ON collectible_transfer_events (collectible_address);
 
-UPDATE database_version SET version_number = 17;
+UPDATE database_version SET version_number = 18;

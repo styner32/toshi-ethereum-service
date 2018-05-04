@@ -57,7 +57,7 @@ contract NonFungibleToken {
         return _ownerOf(_tokenId);
     }
 
-    function tokenMetadata(uint _tokenId) public view returns (string _infoUrl) {
+    function tokenURI(uint _tokenId) public view returns (string _infoUrl) {
         return tokenIdToMetadata[_tokenId];
     }
 
