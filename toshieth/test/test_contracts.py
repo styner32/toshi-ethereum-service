@@ -46,7 +46,8 @@ class ContractTest(EthServiceBaseTest):
 
         # test that contract txs from outside are handled correctly
         resp = await self.fetch_signed("/apn/register", signing_key=FAUCET_PRIVATE_KEY, method="POST", body={
-            "registration_id": "blahblahblah"
+            "registration_id": "blahblahblah",
+            "address": FAUCET_ADDRESS
         })
 
         resp = await self.fetch("/tx/skel", method="POST", body={

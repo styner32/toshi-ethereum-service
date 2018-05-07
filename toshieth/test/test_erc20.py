@@ -75,7 +75,8 @@ class ERC20Test(EthServiceBaseTest):
         await monitor.block_check()
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY, method="POST", body={
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         })
         self.assertEqual(resp.code, 204)
 
@@ -153,7 +154,8 @@ class ERC20Test(EthServiceBaseTest):
         await asyncio.sleep(0.1)
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY, method="POST", body={
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         })
         self.assertEqual(resp.code, 204)
 
@@ -227,7 +229,8 @@ class ERC20Test(EthServiceBaseTest):
         await asyncio.sleep(0.1)
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY_2, method="POST", body={
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         })
         self.assertEqual(resp.code, 204)
 
@@ -271,7 +274,8 @@ class ERC20Test(EthServiceBaseTest):
         await asyncio.sleep(0.1)
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY_2, method="POST", body={
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         })
         self.assertEqual(resp.code, 204)
 
@@ -339,7 +343,8 @@ class ERC20Test(EthServiceBaseTest):
         await self.faucet(TEST_ADDRESS, 10 * 10 ** 18)
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY, method="POST", body={
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         })
         self.assertEqual(resp.code, 204)
 
@@ -807,7 +812,8 @@ class ERC20Test(EthServiceBaseTest):
         await ws_con.call("subscribe", [TEST_ADDRESS_2])
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY_2, method="POST", body={
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         })
         self.assertEqual(resp.code, 204)
 

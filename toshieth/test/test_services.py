@@ -38,7 +38,8 @@ class TestSendGCMPushNotification(FaucetMixin, EthServiceBaseTest):
 
         # register source account for pn
         body = {
-            "registration_id": TEST_GCM_ID_2
+            "registration_id": TEST_GCM_ID_2,
+            "address": FAUCET_ADDRESS
         }
         resp = await self.fetch_signed("/gcm/register", signing_key=FAUCET_PRIVATE_KEY, method="POST", body=body)
         self.assertResponseCodeEqual(resp, 204, resp.body)

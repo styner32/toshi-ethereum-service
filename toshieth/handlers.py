@@ -348,56 +348,27 @@ class PNRegistrationHandler(RequestVerificationMixin, DatabaseMixin, BaseHandler
         if not all(arg in payload for arg in ['registration_id']):
             raise JSONHTTPError(400, body={'errors': [{'id': 'bad_arguments', 'message': 'Bad Arguments'}]})
 
-        # TODO: registration id verification
-
-        # XXX: BACKWARDS COMPAT FOR OLD PN REGISTARTION
-        # remove when no longer needed
-        if 'address' not in payload:
-            async with self.db:
-                legacy = await self.db.fetch("SELECT eth_address FROM notification_registrations "
-                                             "WHERE toshi_id = $1 AND service = 'LEGACY' AND registration_id = 'LEGACY'",
-                                             toshi_id)
+        # eth address verification (default to toshi_id if eth_address is not supplied)
+        if 'address' in payload:
+            eth_addresses = [payload['address']]
+        elif 'addresses' in payload:
+            eth_addresses = payload['addresses']
+            if not type(eth_addresses) == list:
+                raise JSONHTTPError(400, data={'id': 'bad_arguments', 'message': '`addresses` must be a list'})
         else:
-            legacy = False
+            raise JSONHTTPError(400, data={'id': 'bad_arguments', 'message': 'Bad Arguments'})
 
-        if legacy:
+        if not all(validate_address(eth_address) for eth_address in eth_addresses):
+            raise JSONHTTPError(400, data={'id': 'bad_arguments', 'message': 'Bad Arguments'})
 
-            async with self.db:
+        async with self.db:
 
-                for row in legacy:
-                    eth_address = row['eth_address']
-                    await self.db.execute(
-                        "INSERT INTO notification_registrations (toshi_id, service, registration_id, eth_address) "
-                        "VALUES ($1, $2, $3, $4) ON CONFLICT (toshi_id, service, registration_id, eth_address) DO NOTHING",
-                        toshi_id, service, payload['registration_id'], eth_address)
-                await self.db.execute(
-                    "DELETE FROM notification_registrations "
-                    "WHERE toshi_id = $1 AND service = 'LEGACY' AND registration_id = 'LEGACY'", toshi_id)
-                await self.db.commit()
+            await self.db.executemany(
+                "INSERT INTO notification_registrations (toshi_id, service, registration_id, eth_address) "
+                "VALUES ($1, $2, $3, $4) ON CONFLICT (toshi_id, service, registration_id, eth_address) DO NOTHING",
+                [(toshi_id, service, payload['registration_id'], eth_address) for eth_address in eth_addresses])
 
-        else:
-
-            # eth address verification (default to toshi_id if eth_address is not supplied)
-            eth_address = payload['address'] if 'address' in payload else toshi_id
-            if not validate_address(eth_address):
-                raise JSONHTTPError(data={'id': 'bad_arguments', 'message': 'Bad Arguments'})
-
-            async with self.db:
-
-                await self.db.execute(
-                    "INSERT INTO notification_registrations (toshi_id, service, registration_id, eth_address) "
-                    "VALUES ($1, $2, $3, $4) ON CONFLICT (toshi_id, service, registration_id, eth_address) DO NOTHING",
-                    toshi_id, service, payload['registration_id'], eth_address)
-
-                # XXX: temporary fix for old ios versions sending their payment address as toshi_id
-                # should be removed after enough time has passed that most people should be using the fixed version
-                if eth_address != toshi_id:
-                    # remove any apn registrations where toshi_id == eth_address for this eth_address
-                    await self.db.execute(
-                        "DELETE FROM notification_registrations "
-                        "WHERE toshi_id = $1 AND eth_address = $1 AND service = 'apn'", eth_address)
-
-                await self.db.commit()
+            await self.db.commit()
 
         self.set_status(204)
 
@@ -411,22 +382,28 @@ class PNDeregistrationHandler(RequestVerificationMixin, AnalyticsMixin, Database
         if 'registration_id' not in payload:
             raise JSONHTTPError(400, body={'errors': [{'id': 'bad_arguments', 'message': 'Bad Arguments'}]})
 
-        # TODO: registration id verification
-
         # eth address verification (if none is supplied, delete all the matching addresses)
-        eth_address = payload.get('address', None)
-        if eth_address and not validate_address(eth_address):
-            raise JSONHTTPError(data={'id': 'bad_arguments', 'message': 'Bad Arguments'})
+        if 'address' in payload:
+            eth_addresses = [payload['address']]
+        elif 'addresses' in payload:
+            eth_addresses = payload['addresses']
+            if not type(eth_addresses) == list:
+                raise JSONHTTPError(400, data={'id': 'bad_arguments', 'message': '`addresses` must be a list'})
+        else:
+            eth_addresses = []
+
+        if not all(validate_address(eth_address) for eth_address in eth_addresses):
+            raise JSONHTTPError(400, data={'id': 'bad_arguments', 'message': 'Bad Arguments'})
 
         async with self.db:
-
-            args = [toshi_id, service, payload['registration_id']]
-            if eth_address:
-                args.append(eth_address)
-            await self.db.execute(
-                "DELETE FROM notification_registrations WHERE toshi_id = $1 AND service = $2 AND registration_id = $3{}".format(
-                    "AND eth_address = $4" if eth_address else ""),
-                *args)
+            if eth_addresses:
+                await self.db.executemany(
+                    "DELETE FROM notification_registrations WHERE toshi_id = $1 AND service = $2 AND registration_id = $3 and eth_address = $4",
+                    [(toshi_id, service, payload['registration_id'], eth_address) for eth_address in eth_addresses])
+            else:
+                await self.db.execute(
+                    "DELETE FROM notification_registrations WHERE toshi_id = $1 AND service = $2 AND registration_id = $3",
+                    toshi_id, service, payload['registration_id'])
 
             await self.db.commit()
 

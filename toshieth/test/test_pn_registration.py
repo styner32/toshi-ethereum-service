@@ -35,7 +35,8 @@ class PNRegistrationTest(AsyncHandlerTest):
     async def test_register_for_push_notifications(self):
 
         body = {
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         }
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY, method="POST", body=body)
@@ -48,7 +49,30 @@ class PNRegistrationTest(AsyncHandlerTest):
             rows2 = await con.fetch("SELECT * FROM notification_registrations WHERE eth_address = $1", TEST_ADDRESS)
 
         self.assertEqual(len(rows1), 1)
-        self.assertEqual(len(rows2), 1, "toshi id not used as default when registering pns")
+        self.assertEqual(len(rows2), 1)
+
+    @gen_test
+    @requires_database
+    async def test_bulk_register_for_push_notifications(self):
+
+        body = {
+            "registration_id": TEST_APN_ID,
+            "addresses": [TEST_ADDRESS, TEST_ADDRESS_2]
+        }
+
+        resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY, method="POST", body=body)
+
+        self.assertEqual(resp.code, 204, resp.body)
+
+        async with self.pool.acquire() as con:
+
+            rows1 = await con.fetch("SELECT * FROM notification_registrations WHERE toshi_id = $1", TEST_ADDRESS)
+            rows2 = await con.fetch("SELECT * FROM notification_registrations WHERE eth_address = $1", TEST_ADDRESS)
+            rows3 = await con.fetch("SELECT * FROM notification_registrations WHERE eth_address = $1", TEST_ADDRESS_2)
+
+        self.assertEqual(len(rows1), 2)
+        self.assertEqual(len(rows2), 1)
+        self.assertEqual(len(rows3), 1)
 
     @gen_test
     @requires_database
@@ -56,6 +80,7 @@ class PNRegistrationTest(AsyncHandlerTest):
 
         body = {
             "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         }
 
         timestamp = int(time.time())
@@ -87,7 +112,8 @@ class PNRegistrationTest(AsyncHandlerTest):
                                TEST_ADDRESS, TEST_APN_ID, TEST_ADDRESS, TEST_ADDRESS_2, TEST_APN_ID_2, TEST_ADDRESS_2)
 
         body = {
-            "registration_id": TEST_APN_ID
+            "registration_id": TEST_APN_ID,
+            "address": TEST_ADDRESS
         }
 
         resp = await self.fetch_signed("/apn/register", signing_key=TEST_PRIVATE_KEY, method="POST", body=body)
