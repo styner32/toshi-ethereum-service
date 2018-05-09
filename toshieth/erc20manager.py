@@ -35,7 +35,7 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
                 erc20_dispatcher.update_token_cache(contract_address, *eth_addresses, blocknumber=blocknumber).delay(1)
                 return
             if is_wildcard:
-                tokens = await self.db.fetch("SELECT contract_address FROM tokens")
+                tokens = await self.db.fetch("SELECT contract_address FROM tokens where custom = FALSE")
             else:
                 tokens = [{'contract_address': contract_address}]
 
@@ -65,7 +65,6 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
             await client.execute()
 
             bulk_insert = []
-            bulk_delete = []
             for token_contract_address, eth_address, f in futures:
                 try:
                     value = f.result()
@@ -75,10 +74,7 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
                         value = 0
                     else:
                         value = parse_int(value)  # remove hex padding of value
-                    if value > 0:
-                        bulk_insert.append((token_contract_address, eth_address, hex(value)))
-                    else:
-                        bulk_delete.append((token_contract_address, eth_address))
+                    bulk_insert.append((token_contract_address, eth_address, hex(value)))
                 except JsonRPCError as e:
                     if e.message == "Unknown Block Number":
                         # reschedule the update and abort for now
@@ -88,23 +84,16 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
                     log.exception("WARNING: failed to update token cache of '{}' for address: {}".format(token_contract_address, eth_address))
 
             send_update = False
-            if len(bulk_insert) > 0 or len(bulk_delete) > 0:
+            if len(bulk_insert) > 0:
                 async with self.db:
-                    if len(bulk_insert) > 0:
-                        await self.db.executemany(
-                            "INSERT INTO token_balances (contract_address, eth_address, value) "
-                            "VALUES ($1, $2, $3) "
-                            "ON CONFLICT (contract_address, eth_address) "
-                            "DO UPDATE set value = EXCLUDED.value",
-                            bulk_insert)
-                        send_update = True
-                    if len(bulk_delete) > 0:
-                        rval = await self.db.executemany(
-                            "DELETE FROM token_balances WHERE contract_address = $1 AND eth_address = $2",
-                            bulk_delete)
-                        if rval != "DELETE 0":
-                            send_update = True
+                    await self.db.executemany(
+                        "INSERT INTO token_balances (contract_address, eth_address, value) "
+                        "VALUES ($1, $2, $3) "
+                        "ON CONFLICT (contract_address, eth_address) "
+                        "DO UPDATE set value = EXCLUDED.value",
+                        bulk_insert)
                     await self.db.commit()
+                    send_update = True
 
             # wildcard updates usually mean we need to send a refresh trigger to clients
             # currently clients only use a TokenPayment as a trigger to refresh their

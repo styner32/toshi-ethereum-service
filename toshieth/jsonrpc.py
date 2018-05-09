@@ -8,6 +8,7 @@ from toshi.ethereum.mixin import EthereumMixin
 from toshi.redis import RedisMixin
 from toshi.ethereum.utils import data_decoder, data_encoder, checksum_validate_address
 from ethereum.exceptions import InvalidTransaction
+from ethereum.abi import decode_abi
 from functools import partial
 from toshi.utils import (
     validate_address, parse_int, validate_signature, validate_transaction_hash
@@ -24,8 +25,10 @@ from toshi.log import log
 
 from toshi.config import config
 from toshieth.mixins import BalanceMixin
-from toshieth.utils import RedisLock, RedisLockException, database_transaction_to_rlp_transaction
+from toshieth.utils import RedisLock, RedisLockException, database_transaction_to_rlp_transaction, unwrap_or
 from toshieth.tasks import manager_dispatcher, erc20_dispatcher
+
+from toshieth.constants import ERC20_NAME_CALL_DATA, ERC20_DECIMALS_CALL_DATA, ERC20_SYMBOL_CALL_DATA, ERC20_BALANCEOF_CALL_DATA
 
 class JsonRPCInsufficientFundsError(JsonRPCError):
     def __init__(self, *, request=None, data=None):
@@ -523,11 +526,22 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         if token_address:
             async with self.db:
                 token = await self.db.fetchrow(
-                    "SELECT symbol, name, decimals, format "
+                    "SELECT symbol, name, decimals, format, custom "
                     "FROM tokens WHERE contract_address = $1",
                     token_address)
                 if token is None:
                     return None
+                if token['custom']:
+                    custom_token = await self.db.fetchrow(
+                        "SELECT name, symbol, decimals FROM custom_token_registrations "
+                        "WHERE contract_address = $1 AND eth_address = $2",
+                        token_address, eth_address)
+                    token = {
+                        'name': custom_token['name'],
+                        'symbol': custom_token['symbol'],
+                        'decimals': custom_token['decimals'],
+                        'format': token['format']
+                    }
                 balance = await self.db.fetchval(
                     "SELECT value "
                     "FROM token_balances "
@@ -551,11 +565,14 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         else:
             async with self.db:
                 balances = await self.db.fetch(
-                    "SELECT t.symbol, t.name, t.decimals, b.value, b.contract_address, t.format "
+                    "SELECT COALESCE(b.symbol, t.symbol) AS symbol, COALESCE(b.name, t.name) AS name, COALESCE(b.decimals, t.decimals) AS decimals, b.value, b.contract_address, t.format "
                     "FROM token_balances b "
                     "JOIN tokens t "
                     "ON t.contract_address = b.contract_address "
-                    "WHERE eth_address = $1 ORDER BY t.symbol", eth_address)
+                    "WHERE b.eth_address = $1 AND "
+                    "(b.visibility = 2 OR (b.visibility = 1 AND b.value != '0x0')) "
+                    "ORDER BY t.symbol",
+                    eth_address)
 
             tokens = []
             for b in balances:
@@ -575,6 +592,153 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                 tokens.append(details)
 
             return tokens
+
+    async def get_token(self, contract_address):
+        async with self.db:
+            row = await self.db.fetchrow(
+                "SELECT symbol, name, contract_address, decimals, format FROM tokens WHERE contract_address = $1",
+                contract_address)
+
+        if row:
+            token = {
+                'symbol': row['symbol'],
+                'name': row['name'],
+                'contract_address': row['contract_address'],
+                'decimals': row['decimals']
+            }
+            if self.user_toshi_id:
+                async with self.db:
+                    balance = await self.db.fetchval(
+                        "SELECT value FROM token_balances WHERE contract_address = $1 and eth_address = $2",
+                        contract_address, self.user_toshi_id)
+                if balance is None:
+                    balance = await self.eth.eth_call(to_address=contract_address, data="{}000000000000000000000000{}".format(
+                        ERC20_BALANCEOF_CALL_DATA, self.user_toshi_id[2:]))
+                    if balance == "0x":
+                        balance = "0x0"
+                    else:
+                        # strip 0 padding
+                        balance = hex(int(balance, 16))
+                token['balance'] = balance
+            if row['format'] is not None:
+                token['icon'] = "{}://{}/token/{}.{}".format(self.request.protocol, self.request.host,
+                                                             token['contract_address'], row['format'])
+            else:
+                token['icon'] = None
+            return token
+
+        balance, name, symbol, decimals = await self._get_token_details(contract_address)
+
+        if balance is None:
+            return None
+
+        async with self.db:
+            await self.db.execute("INSERT INTO tokens (contract_address, name, symbol, decimals, custom) "
+                                  "VALUES ($1, $2, $3, $4, $5) "
+                                  "ON CONFLICT (contract_address) DO NOTHING",
+                                  contract_address, name, symbol, decimals, True)
+            await self.db.commit()
+
+        rval = {
+            'symbol': symbol,
+            'name': name,
+            'contract_address': contract_address,
+            'decimals': decimals
+        }
+        if self.user_toshi_id:
+            rval['balance'] = hex(balance)
+        return rval
+
+    async def _get_token_details(self, contract_address):
+        """Get token details from the contract's metadata endpoints"""
+
+        bulk = self.eth.bulk()
+        balanceof_future = bulk.eth_call(to_address=contract_address, data="{}000000000000000000000000{}".format(
+            ERC20_BALANCEOF_CALL_DATA, self.user_toshi_id[2:] if self.user_toshi_id is not None else "0000000000000000000000000000000000000000"))
+
+        name_future = bulk.eth_call(to_address=contract_address, data=ERC20_NAME_CALL_DATA)
+        sym_future = bulk.eth_call(to_address=contract_address, data=ERC20_SYMBOL_CALL_DATA)
+        decimals_future = bulk.eth_call(to_address=contract_address, data=ERC20_DECIMALS_CALL_DATA)
+        try:
+            await bulk.execute()
+        except:
+            log.exception("failed getting token details")
+            return None
+        balance = data_decoder(unwrap_or(balanceof_future, "0x"))
+        if balance and balance != "0x":
+            try:
+                balance = decode_abi(['uint256'], balance)[0]
+            except:
+                log.exception("Invalid erc20.balanceOf() result: {}".format(balance))
+                balance = None
+        else:
+            balance = None
+        name = data_decoder(unwrap_or(name_future, "0x"))
+        if name and name != "0x":
+            try:
+                name = decode_abi(['string'], name)[0].decode('utf-8')
+            except:
+                log.exception("Invalid erc20.name() data: {}".format(name))
+                name = None
+        else:
+            name = None
+        symbol = data_decoder(unwrap_or(sym_future, "0x"))
+        if symbol and symbol != "0x":
+            try:
+                symbol = decode_abi(['string'], symbol)[0].decode('utf-8')
+            except:
+                log.exception("Invalid erc20.symbol() data: {}".format(symbol))
+                symbol = None
+        else:
+            symbol = None
+        decimals = data_decoder(unwrap_or(decimals_future, "0x"))
+        if decimals and decimals != "0x":
+            try:
+                decimals = decode_abi(['uint256'], decimals)[0]
+            except:
+                log.exception("Invalid erc20.decimals() data: {}".format(decimals))
+                decimals = None
+        else:
+            decimals = None
+
+        return balance, name, symbol, decimals
+
+    async def add_token(self, *, contract_address, name=None, symbol=None, decimals=None):
+
+        if not self.user_toshi_id:
+            raise JsonRPCInvalidParamsError(data={'id': 'bad_arguments', 'message': "Missing authorisation"})
+
+        token = await self.get_token(contract_address)
+
+        if token is None:
+            raise JsonRPCError(-32000, "Invalid ERC20 Token", {'id': 'bad_arguments', 'message': "Invalid ERC20 Token"},
+                               'id' not in self.request if self.request else False)
+        if 'balance' not in token:
+            log.warning("didn't find a balance when adding custom token: {}".format(contract_address))
+            balance = '0x0'
+        else:
+            balance = token['balance']
+
+        async with self.db:
+            await self.db.execute("INSERT INTO token_balances (eth_address, contract_address, name, symbol, decimals, value, visibility) "
+                                  "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                                  "ON CONFLICT (eth_address, contract_address) DO UPDATE "
+                                  "SET name = EXCLUDED.name, symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals, value = EXCLUDED.value, visibility = EXCLUDED.visibility",
+                                  self.user_toshi_id, contract_address, name, symbol, decimals, balance, 2)
+            await self.db.commit()
+
+        return token
+
+    async def remove_token(self, *, contract_address):
+
+        if not self.user_toshi_id:
+            raise JsonRPCInvalidParamsError(data={'id': 'bad_arguments', 'message': "Missing authorisation"})
+
+        async with self.db:
+            await self.db.execute("UPDATE token_balances SET visibility = 0 "
+                                  "WHERE eth_address = $1 AND contract_address = $2",
+                                  self.user_toshi_id, contract_address)
+            await self.db.commit()
 
     async def get_collectibles(self, address, contract_address=None):
 

@@ -74,7 +74,7 @@ class TokenListHandler(DatabaseMixin, BaseHandler):
         self.write({"tokens": results})
 
 
-class TokenHandler(DatabaseMixin, EthereumMixin, BaseHandler):
+class TokenBalanceHandler(DatabaseMixin, EthereumMixin, BaseHandler):
 
     async def get(self, eth_address, token_address=None):
 
@@ -97,6 +97,53 @@ class TokenHandler(DatabaseMixin, EthereumMixin, BaseHandler):
         else:
             self.write({"tokens": result})
 
+class TokenHandler(DatabaseMixin, EthereumMixin, RequestVerificationMixin, BaseHandler):
+
+    async def get(self, contract_address):
+
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'GET')
+
+        try:
+            result = await ToshiEthJsonRPC(None, self.application, self.request).get_token(contract_address)
+        except JsonRPCError as e:
+            raise JSONHTTPError(400, body={'errors': [e.data]})
+
+        if result is None:
+            raise JSONHTTPError(404, body={'errors': [{'id': 'not_found', 'message': 'Not Found'}]})
+        self.write(result)
+
+    async def post(self):
+
+        eth_address = self.verify_request()
+
+        try:
+            result = await ToshiEthJsonRPC(eth_address, self.application, self.request).add_token(**self.json)
+        except JsonRPCInternalError as e:
+            raise JSONHTTPError(500, body={'errors': [e.data]})
+        except JsonRPCError as e:
+            raise JSONHTTPError(400, body={'errors': [e.data]})
+        except TypeError:
+            raise JSONHTTPError(400, body={'errors': [{'id': 'bad_arguments', 'message': 'Bad Arguments'}]})
+
+        self.write(result)
+
+    async def delete(self, contract_address):
+
+        eth_address = self.verify_request()
+
+        try:
+            await ToshiEthJsonRPC(eth_address, self.application, self.request).remove_token(contract_address=contract_address)
+        except JsonRPCInternalError as e:
+            raise JSONHTTPError(500, body={'errors': [e.data]})
+        except JsonRPCError as e:
+            raise JSONHTTPError(400, body={'errors': [e.data]})
+        except TypeError:
+            raise JSONHTTPError(400, body={'errors': [{'id': 'bad_arguments', 'message': 'Bad Arguments'}]})
+
+        self.set_status(204)
+
 
 class CollectiblesHandler(DatabaseMixin, EthereumMixin, BaseHandler):
 
@@ -112,7 +159,7 @@ class CollectiblesHandler(DatabaseMixin, EthereumMixin, BaseHandler):
             raise JSONHTTPError(400, body={'errors': [e.data]})
 
         if result is None:
-            raise JSONHTTPError(404, body={'error': [{'id': 'not_found', 'message': 'Not Found'}]})
+            raise JSONHTTPError(404, body={'errors': [{'id': 'not_found', 'message': 'Not Found'}]})
         self.write(result)
 
 class BalanceHandler(DatabaseMixin, EthereumMixin, BaseHandler):
@@ -199,7 +246,7 @@ class TransactionHandler(EthereumMixin, DatabaseMixin, BaseHandler):
             raise JSONHTTPError(400, body={'errors': [e.data]})
 
         if tx is None and format != 'sofa':
-            raise JSONHTTPError(404, body={'error': [{'id': 'not_found', 'message': 'Not Found'}]})
+            raise JSONHTTPError(404, body={'errors': [{'id': 'not_found', 'message': 'Not Found'}]})
 
         if format == 'sofa':
 
@@ -208,7 +255,7 @@ class TransactionHandler(EthereumMixin, DatabaseMixin, BaseHandler):
                     "SELECT * FROM transactions where hash = $1 ORDER BY transaction_id DESC",
                     tx_hash)
             if row is None:
-                raise JSONHTTPError(404, body={'error': [{'id': 'not_found', 'message': 'Not Found'}]})
+                raise JSONHTTPError(404, body={'errors': [{'id': 'not_found', 'message': 'Not Found'}]})
             if tx is None:
                 tx = transaction_to_json(database_transaction_to_rlp_transaction(row))
             if row['status'] == 'error':

@@ -1,5 +1,5 @@
 FORMAT: 1A
-HOST: https://ethereum.service.tokenbrowser.com
+HOST: https://ethereum.service.toshi.org
 
 # Toshi Ethereum Service
 
@@ -208,6 +208,135 @@ Returns the balance of the given address. Two values are returned, `confirmed_ba
             "unconfirmed_balance": "0x2b4cf2cc8a310"
         }
 
+
+# Group Tokens
+
+## List ERC20 tokens for address [/v1/tokens/{address}]
+
++ Parameters
+    + address (string) - Ethereum address
+
+### Get Balances [GET]
+
+Returns a list of erc20 tokens their balances owned by the given address.
+
++ Response 200 (application/json)
+
+        {
+          "tokens": [
+            {
+                "symbol": "BEE",
+                "name": "Bee",
+                "decimals": 18,
+                "value": "0x19b0ceecabd95a214e",
+                "contract_address": "0x4d8fc1453a0f359e99c9675954e656d80d996fbf",
+                "icon": "http://ethereum.service.toshi.org/token/0x4d8fc1453a0f359e99c9675954e656d80d996fbf.png"
+            },
+            {
+                "symbol": "BNT",
+                "name": "Bancor",
+                "decimals": 18,
+                "value": "0xf4240",
+                "contract_address": "0x1f573d6fb3f13d689ff844b4ce37794d79a7ff1c",
+                "icon": "http://ethereum.service.toshi.org/token/0x1f573d6fb3f13d689ff844b4ce37794d79a7ff1c.png"
+            },
+            {
+                "symbol": "Candy",
+                "name": "Unicorn Candy Coin",
+                "decimals": 18,
+                "value": "0x15af1d78b58c40000",
+                "contract_address": "0xcd3673af09e76c74d889aabab68ca0645566a3a1",
+                "icon": "http://ethereum.service.toshi.org/token/0xcd3673af09e76c74d889aabab68ca0645566a3a1.png"
+            }
+          ]
+        }
+
+## List Specific ERC20 token for address [/v1/tokens/{address}/{token_address}]
+
++ Parameters
+    + address (string) - Ethereum address
+    + token_address (string) - Ethereum address matching an erc20 token's contract address
+
+### Get Balance [GET]
+
++ Response 200 (application/json)
+
+        {
+            "symbol": "BEE",
+            "name": "Bee",
+            "decimals": 18,
+            "value": "0x19b0ceecabd95a214e",
+            "contract_address": "0x4d8fc1453a0f359e99c9675954e656d80d996fbf",
+            "icon": "http://ethereum.service.toshi.org/token/0x4d8fc1453a0f359e99c9675954e656d80d996fbf.png"
+        }
+
+## Add custom ERC20 token [/v1/token]
+
+### Add custom token [POST]
+
+Adds a custom erc20 token to the list of tokens, and/or forces a token to always show in the token balance list even if it has a 0 balance. Uses Toshi-ID authentication headers to proove ownership of an ethereum address.
+
+`name`, `symbol` and `decimals` are optional, and the service will attempt to get the value from the contract metadata if they aren't given.
+
+NOTE: this should be the address holding the tokens, not a toshi-id, which generally doesn't hold any values.
+
++ Request (application/json)
+
+    + Headers
+
+        Toshi-ID-Address: 0x676f7cb80c9ff6a55e8992d94bac9a3212282c3a
+        Toshi-Signature: 0xc39a479a92fe8d626324ff82a33684610ecd6b50714f59542a1ea558220ec6246a9193dd481078417b3b44d55933989587459d3dd50295d4da67d6580ac8646801
+        Toshi-Timestamp: 1480077346
+
+    + Body
+        {
+            "contract_address": "0x4d8fc1453a0f359e99c9675954e656d80d996fbf"
+        }
+
++ Request (application/json)
+
+    + Headers
+
+        Toshi-ID-Address: 0x676f7cb80c9ff6a55e8992d94bac9a3212282c3a
+        Toshi-Signature: 0xc39a479a92fe8d626324ff82a33684610ecd6b50714f59542a1ea558220ec6246a9193dd481078417b3b44d55933989587459d3dd50295d4da67d6580ac8646801
+        Toshi-Timestamp: 1480077346
+
+    + Body
+        {
+            "contract_address": "0x4d8fc1453a0f359e99c9675954e656d80d996fbf",
+            "name": "some custom token",
+            "symbol": "SCT",
+            "decimals": 18
+        }
+
+## specific ERC20 token [/v1/token/{token_address}]
+
++ Parameters
+    + token_address (string) - Ethereum address matching an erc20 token's contract address
+
+### Get details about erc20 token [GET]
+
+Returns `name`, `symbol` and `decimals` for the given erc20 token
+
++ Response 200 (application/json)
+
+        {
+            "symbol": "BEE",
+            "name": "Bee",
+            "decimals": 18
+        }
+
+### Remove ERC20 token [DELETE]
+
+Removes the given erc20 token from the authenticated address's token list, even if it has a balance.
+
++ Request (application/json)
+
+    + Headers
+
+        Toshi-ID-Address: 0x676f7cb80c9ff6a55e8992d94bac9a3212282c3a
+        Toshi-Signature: 0xc39a479a92fe8d626324ff82a33684610ecd6b50714f59542a1ea558220ec6246a9193dd481078417b3b44d55933989587459d3dd50295d4da67d6580ac8646801
+        Toshi-Timestamp: 1480077346
 
 # Group Notifications
 

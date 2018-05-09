@@ -1,3 +1,4 @@
+import asyncio
 from toshi.utils import parse_int
 from toshi.ethereum.utils import data_decoder
 from toshi.ethereum.tx import create_transaction
@@ -45,3 +46,12 @@ def database_transaction_to_rlp_transaction(transaction):
                             s=parse_int(transaction['s']))
 
     return tx
+
+def unwrap_or(future, default):
+    """returns the result of the future, or returns the default value if the future is an exception"""
+    try:
+        return future.result()
+    except asyncio.InvalidStateError:
+        raise
+    except:
+        return default

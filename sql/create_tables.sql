@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS tokens (
     hash VARCHAR,
     format VARCHAR,
     ready BOOLEAN DEFAULT FALSE,
+    custom BOOLEAN DEFAULT FALSE,
     last_modified TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() AT TIME ZONE 'utc')
 );
 
@@ -71,6 +72,16 @@ CREATE TABLE IF NOT EXISTS token_balances (
     contract_address VARCHAR,
     eth_address VARCHAR,
     value VARCHAR,
+
+    -- used by custom tokens
+    name VARCHAR,
+    symbol VARCHAR,
+    decimals INTEGER,
+
+    visibility INTEGER DEFAULT 1, -- whether to show or hide the token from the balance list
+                                  -- 0: never show
+                                  -- 1: show if balance is > 0
+                                  -- 2: show always
 
     PRIMARY KEY (contract_address, eth_address)
 );
@@ -170,14 +181,18 @@ CREATE INDEX IF NOT EXISTS idx_transactions_from_address_nonce ON transactions (
 CREATE INDEX IF NOT EXISTS idx_notification_registrations_eth_address ON notification_registrations (eth_address);
 
 CREATE INDEX IF NOT EXISTS idx_transactions_status_v_created ON transactions (status NULLS FIRST, v NULLS LAST, created DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions (created);
 
 CREATE INDEX IF NOT EXISTS idx_filter_registrations_contract_address_topic ON filter_registrations (contract_address, topic_id);
 CREATE INDEX IF NOT EXISTS idx_filter_registrations_filter_id_registration_id ON filter_registrations (filter_id, registration_id);
 
 CREATE INDEX IF NOT EXISTS idx_tokens_contract_address ON tokens (contract_address);
-CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address ON token_balances (eth_address);
 CREATE INDEX IF NOT EXISTS idx_token_registrations_last_queried ON token_registrations (last_queried ASC);
+
+CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address ON token_balances (eth_address);
+CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address_contract_address ON token_balances (eth_address, contract_address);
+CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address_visibility_value ON token_balances (eth_address, visibility, value);
 
 CREATE INDEX IF NOT EXISTS idx_collectible_transfer_events_collectible_address ON collectible_transfer_events (collectible_address);
 
-UPDATE database_version SET version_number = 18;
+UPDATE database_version SET version_number = 19;
