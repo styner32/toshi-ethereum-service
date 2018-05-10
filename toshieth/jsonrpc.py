@@ -189,7 +189,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
             if isinstance(value, str) and value.lower() == "max":
                 # get the balance in the database
                 async with self.db:
-                    value = await self.db.fetchval("SELECT value FROM token_balances "
+                    value = await self.db.fetchval("SELECT balance FROM token_balances "
                                                    "WHERE contract_address = $1 AND eth_address = $2",
                                                    token_address, from_address)
                 if value is None:
@@ -265,7 +265,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                     # high enough, check that and throw an error if it's the case, and if not fall
                     # back to the standard invalid_data error
                     async with self.db:
-                        bal = await self.db.fetchval("SELECT value FROM token_balances "
+                        bal = await self.db.fetchval("SELECT balance FROM token_balances "
                                                      "WHERE contract_address = $1 AND eth_address = $2",
                                                      token_address, from_address)
                     if bal is not None:
@@ -541,17 +541,18 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                     return None
                 if token['custom']:
                     custom_token = await self.db.fetchrow(
-                        "SELECT name, symbol, decimals FROM custom_token_registrations "
+                        "SELECT name, symbol, decimals FROM token_balances "
                         "WHERE contract_address = $1 AND eth_address = $2",
                         token_address, eth_address)
-                    token = {
-                        'name': custom_token['name'],
-                        'symbol': custom_token['symbol'],
-                        'decimals': custom_token['decimals'],
-                        'format': token['format']
-                    }
+                    if custom_token:
+                        token = {
+                            'name': custom_token['name'],
+                            'symbol': custom_token['symbol'],
+                            'decimals': custom_token['decimals'],
+                            'format': token['format']
+                        }
                 balance = await self.db.fetchval(
-                    "SELECT value "
+                    "SELECT balance "
                     "FROM token_balances "
                     "WHERE eth_address = $1 AND contract_address = $2",
                     eth_address, token_address)
@@ -561,7 +562,8 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                 "symbol": token['symbol'],
                 "name": token['name'],
                 "decimals": token['decimals'],
-                "value": balance,
+                "value": balance, # NOTE: 'value' left in for backwards compatibility
+                "balance": balance,
                 "contract_address": token_address
             }
             if token['format'] is not None:
@@ -573,12 +575,12 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         else:
             async with self.db:
                 balances = await self.db.fetch(
-                    "SELECT COALESCE(b.symbol, t.symbol) AS symbol, COALESCE(b.name, t.name) AS name, COALESCE(b.decimals, t.decimals) AS decimals, b.value, b.contract_address, t.format "
+                    "SELECT COALESCE(b.symbol, t.symbol) AS symbol, COALESCE(b.name, t.name) AS name, COALESCE(b.decimals, t.decimals) AS decimals, b.balance, b.contract_address, t.format "
                     "FROM token_balances b "
                     "JOIN tokens t "
                     "ON t.contract_address = b.contract_address "
                     "WHERE b.eth_address = $1 AND "
-                    "(b.visibility = 2 OR (b.visibility = 1 AND b.value != '0x0')) "
+                    "(b.visibility = 2 OR (b.visibility = 1 AND b.balance != '0x0')) "
                     "ORDER BY t.symbol",
                     eth_address)
 
@@ -588,7 +590,8 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
                     "symbol": b['symbol'],
                     "name": b['name'],
                     "decimals": b['decimals'],
-                    "value": b['value'],
+                    "value": b['balance'], # NOTE: 'value' left in for backwards compatibility
+                    "balance": b['balance'],
                     "contract_address": b['contract_address']
                 }
                 if b['format'] is not None:
@@ -617,7 +620,7 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
             if self.user_toshi_id:
                 async with self.db:
                     balance = await self.db.fetchval(
-                        "SELECT value FROM token_balances WHERE contract_address = $1 and eth_address = $2",
+                        "SELECT balance FROM token_balances WHERE contract_address = $1 and eth_address = $2",
                         contract_address, self.user_toshi_id)
                 if balance is None:
                     balance = await self.eth.eth_call(to_address=contract_address, data="{}000000000000000000000000{}".format(
@@ -719,8 +722,8 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
         token = await self.get_token(contract_address)
 
         if token is None:
-            raise JsonRPCError(-32000, "Invalid ERC20 Token", {'id': 'bad_arguments', 'message': "Invalid ERC20 Token"},
-                               'id' not in self.request if self.request else False)
+            raise JsonRPCError(None, -32000, "Invalid ERC20 Token",
+                               {'id': 'bad_arguments', 'message': "Invalid ERC20 Token"})
         if 'balance' not in token:
             log.warning("didn't find a balance when adding custom token: {}".format(contract_address))
             balance = '0x0'
@@ -728,10 +731,10 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
             balance = token['balance']
 
         async with self.db:
-            await self.db.execute("INSERT INTO token_balances (eth_address, contract_address, name, symbol, decimals, value, visibility) "
+            await self.db.execute("INSERT INTO token_balances (eth_address, contract_address, name, symbol, decimals, balance, visibility) "
                                   "VALUES ($1, $2, $3, $4, $5, $6, $7) "
                                   "ON CONFLICT (eth_address, contract_address) DO UPDATE "
-                                  "SET name = EXCLUDED.name, symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals, value = EXCLUDED.value, visibility = EXCLUDED.visibility",
+                                  "SET name = EXCLUDED.name, symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals, balance = EXCLUDED.balance, visibility = EXCLUDED.visibility",
                                   self.user_toshi_id, contract_address, name, symbol, decimals, balance, 2)
             await self.db.commit()
 

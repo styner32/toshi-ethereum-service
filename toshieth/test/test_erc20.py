@@ -99,7 +99,7 @@ class ERC20Test(EthServiceBaseTest):
         self.assertEqual(len(body['tokens']), len(token_args) - 1)
 
         for balance in body['tokens']:
-            self.assertEqual(int(balance['value'], 16), 10 ** tokens[balance['contract_address']]['decimals'])
+            self.assertEqual(int(balance['balance'], 16), 10 ** tokens[balance['contract_address']]['decimals'])
 
         await self.send_tx(FAUCET_PRIVATE_KEY, TEST_ADDRESS, 10 ** 18)
 
@@ -135,7 +135,7 @@ class ERC20Test(EthServiceBaseTest):
             async with self.pool.acquire() as con:
                 balance = await con.fetchrow("SELECT * FROM token_balances WHERE eth_address = $1 AND contract_address = $2",
                                              TEST_ADDRESS, contract.address)
-            self.assertEqual(int(balance['value'], 16), (10 ** token['decimals']) * (3 if token['symbol'] != token_args[-1][0] else 2),
+            self.assertEqual(int(balance['balance'], 16), (10 ** token['decimals']) * (3 if token['symbol'] != token_args[-1][0] else 2),
                              "invalid balance after updating {} token".format(token['symbol']))
 
     @gen_test(timeout=60)
@@ -172,7 +172,7 @@ class ERC20Test(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['value'], hex(10 * 10 ** 18))
+        self.assertEqual(body['tokens'][0]['balance'], hex(10 * 10 ** 18))
 
         # make sure tokens are empty to start
         resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS_2))
@@ -199,14 +199,14 @@ class ERC20Test(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['value'], hex(5 * 10 ** 18))
+        self.assertEqual(body['tokens'][0]['balance'], hex(5 * 10 ** 18))
 
         resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS_2))
 
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['value'], hex(5 * 10 ** 18))
+        self.assertEqual(body['tokens'][0]['balance'], hex(5 * 10 ** 18))
 
         # test sending tokens when balance isn't updated fails
         await self.get_tx_skel(TEST_PRIVATE_KEY, TEST_ADDRESS_2, 10 * 10 ** 18,
@@ -367,7 +367,7 @@ class ERC20Test(EthServiceBaseTest):
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
         self.assertEqual(body['tokens'][0]['symbol'], "WETH")
-        self.assertEqual(body['tokens'][0]['value'], hex(5 * 10 ** 18))
+        self.assertEqual(body['tokens'][0]['balance'], hex(5 * 10 ** 18))
 
         resp = await self.fetch("/balance/{}".format(TEST_ADDRESS))
         self.assertResponseCodeEqual(resp, 200)
@@ -445,13 +445,13 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_ken = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'KEN':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_ken = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -467,13 +467,13 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_ken = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'KEN':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_ken = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -562,12 +562,12 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_weth = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'WETH':
                 has_weth = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -583,13 +583,13 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_weth = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'WETH':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_weth = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -615,12 +615,12 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_weth = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'WETH':
                 has_weth = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -725,12 +725,12 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_weth = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'WETH':
                 has_weth = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -746,13 +746,13 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_weth = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'WETH':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_weth = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")
@@ -779,12 +779,12 @@ class ERC20Test(EthServiceBaseTest):
         has_tok = has_weth = has_zrx = False
         for token in body['tokens']:
             if token['symbol'] == 'TOK':
-                self.assertEqual(token['value'], hex(5 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(5 * 10 ** 18))
                 has_tok = True
             elif token['symbol'] == 'WETH':
                 has_weth = True
             elif token['symbol'] == 'ZRX':
-                self.assertEqual(token['value'], hex(9 * 10 ** 18))
+                self.assertEqual(token['balance'], hex(9 * 10 ** 18))
                 has_zrx = True
             else:
                 self.fail("unexpected token symbol")

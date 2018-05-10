@@ -115,7 +115,7 @@ class CustomERC20Test(EthServiceBaseTest):
         body = json_decode(resp.body)
         print(body)
         self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['value'], hex(0))
+        self.assertEqual(body['tokens'][0]['balance'], hex(0))
 
         # test that emptying the balance of a custom token doesn't hide the token
         tx = await self.send_tx(TEST_PRIVATE_KEY, TEST_ADDRESS_2, value, token_address=custom_contract.address)
@@ -127,14 +127,14 @@ class CustomERC20Test(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 2)
-        self.assertEqual(body['tokens'][0]['value'], hex(value))
-        self.assertEqual(body['tokens'][1]['value'], hex(0))
+        self.assertEqual(body['tokens'][0]['balance'], hex(value))
+        self.assertEqual(body['tokens'][1]['balance'], hex(0))
 
         resp = await self.fetch("/tokens/{}".format(TEST_ADDRESS_2))
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['value'], hex(value))
+        self.assertEqual(body['tokens'][0]['balance'], hex(value))
 
     @gen_test(timeout=30)
     @requires_full_stack(block_monitor=True)
@@ -195,4 +195,14 @@ class CustomERC20Test(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 1)
-        self.assertEqual(body['tokens'][0]['value'], hex(0))
+        self.assertEqual(body['tokens'][0]['balance'], hex(0))
+
+    @gen_test(timeout=30)
+    @requires_full_stack
+    async def test_fail_register_custom_erc20_token(self):
+
+        resp = await self.fetch_signed("/token", method="POST", signing_key=TEST_PRIVATE_KEY, body={
+            "contract_address": "0x0123456789012345678901234567890123456789"})
+        self.assertResponseCodeEqual(resp, 400)
+        body = json_decode(resp.body)
+        self.assertEqual(body['errors'][0]['message'], "Invalid ERC20 Token")

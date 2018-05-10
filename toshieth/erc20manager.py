@@ -87,10 +87,10 @@ class ERC20UpdateHandler(EthereumMixin, BaseTaskHandler):
             if len(bulk_insert) > 0:
                 async with self.db:
                     await self.db.executemany(
-                        "INSERT INTO token_balances (contract_address, eth_address, value) "
+                        "INSERT INTO token_balances (contract_address, eth_address, balance) "
                         "VALUES ($1, $2, $3) "
                         "ON CONFLICT (contract_address, eth_address) "
-                        "DO UPDATE set value = EXCLUDED.value",
+                        "DO UPDATE set balance = EXCLUDED.balance",
                         bulk_insert)
                     await self.db.commit()
                     send_update = True

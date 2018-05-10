@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS tokens (
 CREATE TABLE IF NOT EXISTS token_balances (
     contract_address VARCHAR,
     eth_address VARCHAR,
-    value VARCHAR,
+    balance VARCHAR,
 
     -- used by custom tokens
     name VARCHAR,
@@ -191,8 +191,8 @@ CREATE INDEX IF NOT EXISTS idx_token_registrations_last_queried ON token_registr
 
 CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address ON token_balances (eth_address);
 CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address_contract_address ON token_balances (eth_address, contract_address);
-CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address_visibility_value ON token_balances (eth_address, visibility, value);
+CREATE INDEX IF NOT EXISTS idx_token_balance_eth_address_visibility_balance ON token_balances (eth_address, visibility, balance);
 
 CREATE INDEX IF NOT EXISTS idx_collectible_transfer_events_collectible_address ON collectible_transfer_events (collectible_address);
 
-UPDATE database_version SET version_number = 19;
+UPDATE database_version SET version_number = 20;
