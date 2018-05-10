@@ -108,6 +108,14 @@ class ToshiEthJsonRPC(JsonRPCBase, BalanceMixin, DatabaseMixin, EthereumMixin, A
     @map_jsonrpc_arguments({'from': 'from_address', 'to': 'to_address'})
     async def create_transaction_skeleton(self, *, to_address, from_address, value=0, nonce=None, gas=None, gas_price=None, data=None, token_address=None):
 
+        # strip begining and trailing whitespace from addresses
+        if to_address is not None and isinstance(to_address, str):
+            to_address = to_address.strip()
+        if from_address is not None and isinstance(from_address, str):
+            to_address = to_address.strip()
+        if token_address is not None and isinstance(token_address, str):
+            token_address = token_address.strip()
+
         if not validate_address(from_address):
             raise JsonRPCInvalidParamsError(data={'id': 'invalid_from_address', 'message': 'Invalid From Address'})
 

@@ -748,3 +748,17 @@ class TransactionTest(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(int(body['gas'], 16), int(21068 * 1.2))
+
+    @gen_test(timeout=30)
+    @requires_full_stack
+    async def test_create_skeleton_with_whitespace_in_address(self):
+
+        val = 10 ** 10
+        body = {
+            "from": FAUCET_ADDRESS,
+            "to": "{}\n".format(TEST_ADDRESS),
+            "value": val
+        }
+
+        resp = await self.fetch("/tx/skel", method="POST", body=body)
+        self.assertEqual(resp.code, 200)
