@@ -93,7 +93,11 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
 
             for i, _log in enumerate(logs):
                 log_block_number = int(_log['blockNumber'], 16)
-                assert log_block_number >= from_block_number and log_block_number <= to_block_number
+                if log_block_number < from_block_number or log_block_number > to_block_number:
+                    log.error("go unexpected block number in logs: {} (fromBlock={}, toBlock={}, collectible_address={})".format(
+                        log_block_number, from_block_number, to_block_number, collectible['contract_address']))
+                    del self._processing[collectible_address]
+                    return
 
                 topic = _log['topics'][0]
 
@@ -235,7 +239,11 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
 
             for i, _log in enumerate(logs):
                 log_block_number = int(_log['blockNumber'], 16)
-                assert log_block_number >= from_block_number and log_block_number <= to_block_number
+                if log_block_number < from_block_number or log_block_number > to_block_number:
+                    log.error("go unexpected block number in logs: {} (fromBlock={}, toBlock={}, address={})".format(
+                        log_block_number, from_block_number, to_block_number, contract_address))
+                    del self._processing[contract_address]
+                    return
 
                 topic = _log['topics'][0]
 
@@ -246,6 +254,7 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
                         data = decode_abi(data_types, data_decoder(_log['data']))
                     except:
                         log.exception("Error decoding log data: {} {}".format(data_types, _log['data']))
+                        del self._processing[contract_address]
                         return
                     arguments = []
                     try:
