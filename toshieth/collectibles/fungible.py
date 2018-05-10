@@ -197,12 +197,12 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
     @log_unhandled_exceptions(logger=log)
     async def process_block_for_asset_contract(self, contract_address):
 
-        if contract_address in self._processing:
+        if contract_address in self._processing and not self._processing[contract_address].done():
             log.warning("Already processing {}".format(contract_address))
             self._queue.add(contract_address)
             return
 
-        self._processing[contract_address] = True
+        self._processing[contract_address] = asyncio.Task.current_task()
 
         async with self.pool.acquire() as con:
             latest_block_number = await con.fetchval(
