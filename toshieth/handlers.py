@@ -125,6 +125,7 @@ class TokenHandler(DatabaseMixin, EthereumMixin, RequestVerificationMixin, BaseH
         except JsonRPCError as e:
             raise JSONHTTPError(400, body={'errors': [e.data]})
         except TypeError:
+            log.exception("bad_arguments")
             raise JSONHTTPError(400, body={'errors': [{'id': 'bad_arguments', 'message': 'Bad Arguments'}]})
 
         self.write(result)
