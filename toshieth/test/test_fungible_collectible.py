@@ -107,5 +107,5 @@ class ERC721Test(EthServiceBaseTest):
         self.assertResponseCodeEqual(resp, 200)
         body = json_decode(resp.body)
         self.assertEqual(len(body['tokens']), 2)
-        self.assertEqual(body['tokens'][0]['image'], "http://ART2.png")
-        self.assertEqual(body['tokens'][1]['image'], "https://ipfs.node/dasdasdasdasdasdasdasd")
+        self.assertEqual(body['tokens'][0]['image'], "http://ART2.png" if body['tokens'][0]['name'] == "ART2" else "https://ipfs.node/dasdasdasdasdasdasdasd")
+        self.assertEqual(body['tokens'][1]['image'], "http://ART2.png" if body['tokens'][1]['name'] == "ART2" else "https://ipfs.node/dasdasdasdasdasdasdasd")

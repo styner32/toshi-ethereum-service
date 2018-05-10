@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from toshi.log import configure_logger, log_unhandled_exceptions
 from toshi.ethereum.utils import data_decoder
 from ethereum.utils import sha3
@@ -10,7 +11,7 @@ from urllib.parse import urlparse
 from tornado.httpclient import AsyncHTTPClient
 from tornado.escape import json_decode
 
-log = logging.getLogger("toshieth.rareart")
+log = logging.getLogger("toshieth.fungible")
 
 ASSET_CREATED_TOPIC = "0xa34547120a941eab43859acf535a121237e5536fd476dccda8174fb1af6926ed"
 ASSET_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -25,6 +26,7 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
         super().__init__()
         configure_logger(log)
         self._processing = {}
+        self._queue = set()
 
     async def process_block(self, blocknumber=None):
 
@@ -44,12 +46,14 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
         # TODO: move this to a different process as it will not scale this way once the number of fungible collectibles grows a lot
         for collectible in fungible_collectibles:
             asyncio.get_event_loop().create_task(self.process_block_for_asset_contract(collectible['contract_address']))
+            await asyncio.sleep(random.random() / 10)
 
     @log_unhandled_exceptions(logger=log)
     async def process_block_for_asset_creation_contract(self, collectible_address):
 
         if collectible_address in self._processing and not self._processing[collectible_address].done():
             log.warning("Already processing {}".format(collectible_address))
+            self._queue.add(collectible_address)
             return
 
         self._processing[collectible_address] = asyncio.Task.current_task()
@@ -79,7 +83,8 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
                     address=collectible['contract_address'])
                 break
             except:
-                log.execption("error getting logs")
+                log.execption("error getting logs for fungible creation contract: {}".format(collectible_address))
+                await asyncio.sleep(random.random())
                 continue
 
         if len(logs):
@@ -181,13 +186,16 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
                               to_block_number, ready, collectible_address)
 
         del self._processing[collectible_address]
-        if to_block_number < latest_block_number:
+        if to_block_number < latest_block_number or collectible_address in self._queue:
+            self._queue.discard(collectible_address)
             asyncio.get_event_loop().create_task(self.process_block_for_asset_creation_contract(collectible_address))
 
+    @log_unhandled_exceptions(logger=log)
     async def process_block_for_asset_contract(self, contract_address):
 
         if contract_address in self._processing:
             log.warning("Already processing {}".format(contract_address))
+            self._queue.add(contract_address)
             return
 
         self._processing[contract_address] = True
@@ -218,6 +226,9 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
                     address=contract_address)
                 break
             except:
+                log.exception("Error getting logs for fungible asset contract")
+                # backoff randomly
+                await asyncio.sleep(random.random())
                 continue
 
         if len(logs):
@@ -285,7 +296,8 @@ class FungibleCollectibleTaskManager(CollectiblesTaskManager):
                               to_block_number, ready, contract_address)
 
         del self._processing[contract_address]
-        if to_block_number < latest_block_number:
+        if to_block_number < latest_block_number or contract_address in self._queue:
+            self._queue.discard(contract_address)
             asyncio.get_event_loop().create_task(self.process_block_for_asset_contract(contract_address))
 
 
