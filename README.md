@@ -24,7 +24,7 @@ env/bin/pip install -r requirements-development.txt
 ```
 export DATABASE_URL=postgres://<postgres-dsn>
 export REDIS_URL=redis://<redis-dsn>
-export ETHERERUM_NODE_URL=<jsonrpc-url>
+export ETHEREUM_NODE_URL=<jsonrpc-url>
 trap 'kill $(jobs -p)' EXIT
 env/bin/python -m toshieth &
 env/bin/python -m toshieth.monitor &
