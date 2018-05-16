@@ -16,6 +16,9 @@ if [ -e requirements-testing.txt ]; then
 fi
 
 export DATABASE_URL=postgresql://$(whoami):@localhost:5432/toshieth_dev
+export REDIS_URL=redis://127.0.0.1:6379
+export ETHEREUM_NODE_URL=http://159.89.204.101:8545
+# export ETHEREUM_NETWORK_ID=1
 export PGSQL_SSL_DISABLED=1
 
 env/bin/python -m toshieth
