@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+
 IFS=$'\n\t'
 if [ ! -d 'env' ]; then
     echo "setting up virtualenv"
@@ -11,8 +12,13 @@ fi
 if [ -e requirements-development.txt ]; then
     env/bin/pip -q install -r requirements-development.txt
 fi
-if [ -e requirements-testing.txt ]; then
-    env/bin/pip -q install -r requirements-testing.txt
+
+DBNAME=toshieth_dev
+if [[ $(psql -d postgres -c "SELECT datname from pg_database WHERE datname='$DBNAME'" | grep $DBNAME) ]]; then
+  echo "$DBNAME exists"
+else
+  echo "$DBNAME does not exists"
+  createdb $DBNAME
 fi
 
 export DATABASE_URL=postgresql://$(whoami):@localhost:5432/toshieth_dev
@@ -21,4 +27,4 @@ export ETHEREUM_NODE_URL=http://159.89.204.101:8545
 # export ETHEREUM_NETWORK_ID=1
 export PGSQL_SSL_DISABLED=1
 
-env/bin/python -m toshieth
+env/bin/python -m toshieth --port=3100
