@@ -1,5 +1,4 @@
 #PYTHON3
-asyncpg==0.15.0
 aioredis==1.1.0
 msgpack-python==0.4.8
 -e git+https://github.com/tristan/trq.git@v1.0.0#egg=trq

@@ -45,8 +45,7 @@ class ERC721TaskManager(CollectiblesTaskManager):
         self._processing[collectible_address] = True
 
         async with self.pool.acquire() as con:
-            latest_block_number = await con.fetchval(
-                "SELECT blocknumber FROM last_blocknumber")
+            latest_block_number = await con.fetchval("SELECT blocknumber FROM last_blocknumber")
             collectible = await con.fetchrow("SELECT * FROM collectibles WHERE contract_address = $1",
                                              collectible_address)
             if collectible is None:

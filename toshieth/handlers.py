@@ -213,7 +213,9 @@ class SendTransactionHandler(BalanceMixin, EthereumMixin, DatabaseMixin, RedisMi
     async def post(self):
 
         if self.is_request_signed():
+            print('signed')
             sender_toshi_id = self.verify_request()
+            print('id', sender_toshi_id);
         else:
             # this is an anonymous transaction
             sender_toshi_id = None
